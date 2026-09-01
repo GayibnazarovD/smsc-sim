@@ -1,0 +1,27 @@
+# Deterministic, fast config for CI: no response latency, immediate receipts,
+# fixed seed. Everything an integration test needs and nothing that adds wall time.
+
+seed: 1
+log: { level: warn }
+metrics: { listen: ":9090" }
+
+defaults:
+  submit_resp_latency: { dist: fixed, mean: 0s }
+  dlr:
+    enabled: true
+    delay: { min: 0s, max: 0s } # receipt sent as soon as submit_sm_resp goes out
+    outcomes: { DELIVRD: 100 }
+
+operators:
+  - name: sim
+    listen: "127.0.0.1:2775"
+    accounts: [{ system_id: test, password: test }]
+
+  # A second operator that only ever fails delivery — for exercising the
+  # client's UNDELIV / retry path.
+  - name: sink-fail
+    listen: "127.0.0.1:2776"
+    accounts: [{ system_id: test, password: test }]
+    dlr:
+      outcomes: { UNDELIV: 100 }
+      err_codes: { UNDELIV: 1 }

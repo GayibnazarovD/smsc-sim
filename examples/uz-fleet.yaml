@@ -1,0 +1,57 @@
+# A fleet of operator endpoints on distinct ports, so an SMPP client/gateway can
+# be pointed at a realistic multi-carrier topology in a dev environment.
+#
+# Every operator inherits the `defaults` block; each then overrides only what
+# differs (its port, credentials, TPS ceiling, DLR error profile).
+
+seed: 42 # reproducible load runs
+
+log: { level: info, format: json }
+metrics: { listen: ":9090" }
+admin: { listen: ":8080" }
+
+defaults:
+  smpp_version: "3.4"
+  window_size: 10
+  enquire_link_interval: 30s
+  session_idle_timeout: 90s
+  submit_resp_latency: { dist: exponential, mean: 35ms, max: 300ms }
+  throttle: { tps: 100, burst: 100 }
+  dlr:
+    enabled: true
+    delay: { min: 3s, max: 25s }
+    outcomes: { DELIVRD: 92, UNDELIV: 5, EXPIRED: 2, REJECTD: 1 }
+    tlv: true
+
+operators:
+  - name: Beeline
+    listen: ":2775"
+    accounts: [{ system_id: bee_esme, password: bee_pw }]
+    throttle: { tps: 80 }
+
+  - name: Ucell
+    listen: ":2776"
+    accounts: [{ system_id: ucl_esme, password: ucl_pw }]
+    throttle: { tps: 50 }
+    dlr:
+      outcomes: { DELIVRD: 88, UNDELIV: 12 }
+      err_codes: { UNDELIV: 1282 } # carrier-specific undeliverable code
+
+  - name: MobiUz
+    listen: ":2777"
+    accounts: [{ system_id: mob_esme, password: mob_pw }]
+    throttle: { count: 300, window: 60s } # 5/s sustained, burst 300
+    concat: { shared_message_id: true }   # one message id across all parts
+
+  - name: Uzmobile
+    listen: ":2778"
+    accounts: [{ system_id: uzm_esme, password: uzm_pw }]
+    throttle: { count: 50, window: 1s }
+
+  - name: Humans
+    listen: ":2779"
+    accounts: [{ system_id: hmn_esme, password: hmn_pw }]
+
+  - name: Perfectum
+    listen: ":2780"
+    accounts: [{ system_id: prf_esme, password: prf_pw }]

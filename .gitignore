@@ -1,0 +1,17 @@
+# Binaries
+/smsc-sim
+/dist/
+*.exe
+
+# Test / coverage
+*.out
+coverage.txt
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
+
+# Local config that isn't an example
+/smsc-sim.yaml
+/*.local.yaml

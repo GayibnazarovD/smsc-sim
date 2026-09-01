@@ -1,0 +1,25 @@
+# Bring up the simulated operator fleet:
+#   docker compose -f deploy/docker-compose.yml up
+#
+# Then point your SMPP client at localhost:2775..2780 with the credentials from
+# examples/uz-fleet.yaml.
+
+services:
+  smsc-sim:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ghcr.io/dilshodgayibnazarov/smsc-sim:latest
+    command: ["-config", "/etc/smsc-sim.yaml"]
+    volumes:
+      - ../examples/uz-fleet.yaml:/etc/smsc-sim.yaml:ro
+    ports:
+      - "2775:2775" # Beeline
+      - "2776:2776" # Ucell
+      - "2777:2777" # MobiUz
+      - "2778:2778" # Uzmobile
+      - "2779:2779" # Humans
+      - "2780:2780" # Perfectum
+      - "9090:9090" # Prometheus metrics
+      - "8080:8080" # admin API
+    restart: unless-stopped

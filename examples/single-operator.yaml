@@ -1,0 +1,27 @@
+# Minimal single-operator config.
+#   smsc-sim -config examples/single-operator.yaml
+# Bind with system_id "esme" / password "s3cret" on 127.0.0.1:2775.
+
+seed: 0 # 0 = random each run; set any non-zero value to make a run reproducible
+
+log:
+  level: info
+  format: text
+
+metrics:
+  listen: ":9090" # Prometheus scrape endpoint at /metrics
+admin:
+  listen: ":8080" # JSON control API; GET /admin/operators, POST /admin/operators/{name}/mo
+
+operators:
+  - name: local
+    listen: "127.0.0.1:2775"
+    accounts:
+      - { system_id: esme, password: s3cret }
+    window_size: 10
+    submit_resp_latency: { dist: fixed, mean: 30ms, jitter: 10ms }
+    throttle: { tps: 100 }
+    dlr:
+      enabled: true
+      delay: { min: 2s, max: 10s }
+      outcomes: { DELIVRD: 95, UNDELIV: 4, EXPIRED: 1 }

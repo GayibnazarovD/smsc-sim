@@ -1,0 +1,83 @@
+package smpp
+
+import (
+	"bufio"
+	"bytes"
+	"testing"
+)
+
+func TestReadRawRoundTrip(t *testing.T) {
+	body := EncodeBindResp("SIM-SMSC", Version34)
+	frame := Marshal(BindTransceiverResp, ESME_ROK, 42, body)
+
+	r := bufio.NewReader(bytes.NewReader(frame))
+	p, err := ReadRaw(r)
+	if err != nil {
+		t.Fatalf("ReadRaw: %v", err)
+	}
+	if p.Header.ID != BindTransceiverResp {
+		t.Errorf("ID = %s, want bind_transceiver_resp", p.Header.ID)
+	}
+	if p.Header.Status != ESME_ROK || p.Header.Seq != 42 {
+		t.Errorf("header = %+v", p.Header)
+	}
+	if int(p.Header.Length) != len(frame) {
+		t.Errorf("Length = %d, want %d", p.Header.Length, len(frame))
+	}
+}
+
+func TestDecodeBind(t *testing.T) {
+	w := &writer{}
+	w.cstr("esme01")
+	w.cstr("s3cr3t")
+	w.cstr("SMPP")
+	w.u8(Version34)
+	w.u8(0)
+	w.u8(0)
+	w.cstr("")
+
+	b, err := DecodeBind(w.bytesVal())
+	if err != nil {
+		t.Fatalf("DecodeBind: %v", err)
+	}
+	if b.SystemID != "esme01" || b.Password != "s3cr3t" || b.SystemType != "SMPP" {
+		t.Fatalf("bind = %+v", b)
+	}
+	if b.InterfaceVersion != Version34 {
+		t.Errorf("InterfaceVersion = %#x", b.InterfaceVersion)
+	}
+}
+
+func TestDecodeSMWithTLV(t *testing.T) {
+	in := &SM{
+		SourceAddr:         "12345",
+		DestAddr:           "998901234567",
+		ESMClass:           0,
+		RegisteredDelivery: 1,
+		ShortMessage:       []byte("hello world"),
+		TLVs:               []TLV{{Tag: TagUserMessageRef, Value: []byte{0x00, 0x2a}}},
+	}
+	out, err := DecodeSM(in.Encode())
+	if err != nil {
+		t.Fatalf("DecodeSM: %v", err)
+	}
+	if out.SourceAddr != in.SourceAddr || out.DestAddr != in.DestAddr {
+		t.Fatalf("addr mismatch: %+v", out)
+	}
+	if string(out.ShortMessage) != "hello world" {
+		t.Errorf("short_message = %q", out.ShortMessage)
+	}
+	if !out.WantsReceipt() {
+		t.Errorf("WantsReceipt = false, want true")
+	}
+	v, ok := out.TLV(TagUserMessageRef)
+	if !ok || !bytes.Equal(v, []byte{0x00, 0x2a}) {
+		t.Errorf("TLV user_message_reference = %v, ok=%v", v, ok)
+	}
+}
+
+func TestDecodeSMTruncated(t *testing.T) {
+	if _, err := DecodeSM([]byte{0x00, 0x01}); err == nil {
+		t.Fatal("expected error on truncated body")
+	}
+}

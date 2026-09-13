@@ -651,11 +651,12 @@
   }
 
   function hasNonGSM(str) {
-    // Check if contains non-basic latin/ascii (e.g. cyrillic, emoji)
-    // Basic GSM 7-bit charset regex test
-    const gsmRegex = /^[@£$¥èéùìòÇ
-ØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà^{}\[~\]|€]*$/;
-    return !gsmRegex.test(str);
+    // Check if string contains characters outside standard GSM 7-bit alphabet
+    const gsm7 = "@£$¥èéùìòÇ\r\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#$%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà^{}\\[~]|€";
+    for (let i = 0; i < str.length; i++) {
+      if (gsm7.indexOf(str[i]) === -1) return true;
+    }
+    return false;
   }
 
   // Handle MO Submission

@@ -3,6 +3,7 @@ package smsc
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
@@ -39,6 +40,10 @@ func (b bindMode) String() string {
 
 // session is one accepted TCP connection and its SMPP state.
 type session struct {
+	id          string
+	connectedAt time.Time
+	remoteAddr  string
+
 	op   *Operator
 	conn net.Conn
 	br   *bufio.Reader
@@ -59,12 +64,15 @@ type session struct {
 
 func newSession(op *Operator, conn net.Conn) *session {
 	s := &session{
-		op:   op,
-		conn: conn,
-		br:   bufio.NewReaderSize(conn, 4096),
-		log:  op.log.With("remote", conn.RemoteAddr().String()),
-		rng:  op.newRNG(),
-		done: make(chan struct{}),
+		id:          fmt.Sprintf("sess-%s-%d", op.cfg.Name, op.sessSeq.Add(1)),
+		connectedAt: time.Now(),
+		remoteAddr:  conn.RemoteAddr().String(),
+		op:          op,
+		conn:        conn,
+		br:          bufio.NewReaderSize(conn, 4096),
+		log:         op.log.With("remote", conn.RemoteAddr().String()),
+		rng:         op.newRNG(),
+		done:        make(chan struct{}),
 	}
 	s.lastRx.Store(time.Now().UnixNano())
 	return s
@@ -81,6 +89,20 @@ func (s *session) canSubmit() bool {
 }
 
 func (s *session) nextSeq() uint32 { return s.seq.Add(1) }
+
+func (s *session) describe() SessionSnapshot {
+	lastRx := time.Unix(0, s.lastRx.Load())
+	return SessionSnapshot{
+		ID:          s.id,
+		Operator:    s.op.cfg.Name,
+		RemoteAddr:  s.remoteAddr,
+		SystemID:    s.systemID,
+		Mode:        s.getMode().String(),
+		ConnectedAt: s.connectedAt,
+		LastRxAt:    lastRx,
+		InFlight:    s.inFlight.Load(),
+	}
+}
 
 // serve runs the read loop until the peer disconnects, an error occurs, or the
 // server shuts the session down.
@@ -138,6 +160,7 @@ func (s *session) dispatch(raw *smpp.RawPDU) (stop bool) {
 		// response to our heartbeat
 	case smpp.Unbind:
 		s.send(smpp.UnbindResp, smpp.ESME_ROK, raw.Header.Seq, nil)
+		s.op.srv.RecordEvent(s.op.cfg.Name, "unbind", "info", fmt.Sprintf("Account %q unbound", s.systemID), s.remoteAddr)
 		return true
 	case smpp.GenericNACK:
 		// ignore
@@ -164,26 +187,31 @@ func (s *session) handleBind(raw *smpp.RawPDU) (stop bool) {
 	}
 	if !s.op.bindAllowed(raw.Header.ID) {
 		s.op.m.Binds.WithLabelValues(name, btype, "bind_type_refused").Inc()
+		s.op.srv.RecordEvent(name, "bind", "warn", fmt.Sprintf("Bind type refused (%s)", btype), s.remoteAddr)
 		s.send(raw.Header.ID.RespID(), smpp.ESME_RBINDFAIL, raw.Header.Seq, nil)
 		return true
 	}
 	if s.op.cfg.SMPPVersion == "3.4" && raw.Header.ID == smpp.BindTransceiver && b.InterfaceVersion != 0 && b.InterfaceVersion < smpp.Version34 {
 		s.op.m.Binds.WithLabelValues(name, btype, "version_refused").Inc()
+		s.op.srv.RecordEvent(name, "bind", "warn", fmt.Sprintf("Interface version refused (%s)", btype), s.remoteAddr)
 		s.send(raw.Header.ID.RespID(), smpp.ESME_RBINDFAIL, raw.Header.Seq, nil)
 		return true
 	}
 	if s.op.cfg.Faults.RejectBindPct > 0 && pct(s.rng, s.op.cfg.Faults.RejectBindPct) {
 		s.op.m.Binds.WithLabelValues(name, btype, "fault_rejected").Inc()
+		s.op.srv.RecordEvent(name, "bind", "warn", fmt.Sprintf("Bind fault rejected (%s)", btype), s.remoteAddr)
 		s.send(raw.Header.ID.RespID(), smpp.ESME_RBINDFAIL, raw.Header.Seq, nil)
 		return true
 	}
 	if _, st := s.op.authenticate(b); st != smpp.ESME_ROK {
 		s.op.m.Binds.WithLabelValues(name, btype, "auth_failed").Inc()
+		s.op.srv.RecordEvent(name, "bind", "error", fmt.Sprintf("Auth failed for system_id=%q", b.SystemID), s.remoteAddr)
 		s.send(raw.Header.ID.RespID(), st, raw.Header.Seq, nil)
 		return true
 	}
 	if s.op.atBindLimit() {
 		s.op.m.Binds.WithLabelValues(name, btype, "bind_limit").Inc()
+		s.op.srv.RecordEvent(name, "bind", "warn", fmt.Sprintf("Bind limit reached (%d binds max)", s.op.cfg.MaxBinds), s.remoteAddr)
 		s.send(raw.Header.ID.RespID(), smpp.ESME_RBINDFAIL, raw.Header.Seq, nil)
 		return true
 	}
@@ -199,6 +227,7 @@ func (s *session) handleBind(raw *smpp.RawPDU) (stop bool) {
 	s.systemID = b.SystemID
 	s.op.addSession(s)
 	s.op.m.Binds.WithLabelValues(name, btype, "ok").Inc()
+	s.op.srv.RecordEvent(name, "bind", "success", fmt.Sprintf("Account %q bound (%s mode)", b.SystemID, s.getMode().String()), s.remoteAddr)
 	s.log.Info("bound", "mode", s.getMode().String(), "system_id", b.SystemID)
 	s.send(raw.Header.ID.RespID(), smpp.ESME_ROK, raw.Header.Seq, smpp.EncodeBindResp("smsc-sim", s.op.scVersion()))
 	return false
@@ -229,11 +258,13 @@ func (s *session) handleSubmit(raw *smpp.RawPDU) {
 	}
 	if w := s.op.cfg.WindowSize; w > 0 && s.inFlight.Load() >= int64(w) {
 		s.op.m.SubmitSM.WithLabelValues(name, "queue_full").Inc()
+		s.op.srv.RecordEvent(name, "queue_full", "warn", fmt.Sprintf("Window queue full (%d inflight)", s.inFlight.Load()), s.remoteAddr)
 		s.send(smpp.SubmitSMResp, smpp.ESME_RMSGQFUL, raw.Header.Seq, nil)
 		return
 	}
 	if s.op.limited && !s.op.bucket.Allow() {
 		s.op.m.SubmitSM.WithLabelValues(name, "throttled").Inc()
+		s.op.srv.RecordEvent(name, "throttled", "warn", "submit_sm throttled (ESME_RTHROTTLED)", fmt.Sprintf("From: %s To: %s", sm.SourceAddr, sm.DestAddr))
 		s.send(smpp.SubmitSMResp, smpp.ESME_RTHROTTLED, raw.Header.Seq, nil)
 		return
 	}
@@ -284,6 +315,7 @@ func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Ti
 			return
 		}
 		s.op.m.DLRSent.WithLabelValues(s.op.cfg.Name, outcome.Stat).Inc()
+		s.op.srv.RecordEvent(s.op.cfg.Name, "dlr", "info", fmt.Sprintf("DLR delivered: %s (%s)", outcome.Stat, msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
 	}()
 }
 

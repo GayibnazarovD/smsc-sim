@@ -99,13 +99,31 @@ Full field-by-field reference: [`docs/config-reference.md`](docs/config-referenc
 Protocol coverage and known limits: [`docs/protocol-coverage.md`](docs/protocol-coverage.md).
 Load-testing recipe: [`docs/load-testing-guide.md`](docs/load-testing-guide.md).
 
-## Admin API
+## Web Admin Dashboard & HTTP API
+
+`smsc-sim` ships with an **embedded single-page Web Admin UI** served directly from the binary on the admin HTTP port (default `http://localhost:8080/`). No Node.js or web server required.
+
+### Features
+- **Fleet Overview**: Live cards for each operator with bind counts, active ports, TPS limits, window sizes, and DLR statuses.
+- **Active Sessions Inspector**: Real-time table of connected client sockets (TX, RX, TRX) with remote IPs, system IDs, in-flight queues, and one-click session disconnect for fault drills.
+- **MO Studio**: Interactive form to inject Mobile-Originated (`deliver_sm`) messages with preset templates (OTP, delivery alerts, bank notifications) and a live GSM-7 / UCS-2 character counter and segment calculator.
+- **Live Activity Stream**: Real-time circular log of recent simulator events (binds, unbinds, throttled submissions, DLRs, errors).
+- **Config Viewer**: Formatted JSON/YAML runtime configuration inspector with one-click clipboard copy.
+
+### Admin HTTP API Endpoints
 
 | Method & path | Purpose |
 |---|---|
-| `GET /healthz` | liveness |
-| `GET /admin/operators` | per-operator snapshot (accounts, bind types, active binds, messages seen) |
-| `POST /admin/operators/{name}/mo` | inject a mobile-originated message: `{"source","dest","text","data_coding"}` |
+| `GET /` | Web Admin UI dashboard |
+| `GET /ui/*` | Embedded static dashboard assets (CSS, JS) |
+| `GET /healthz` | Simulator liveness check (`200 OK`) |
+| `GET /admin/overview` | High-level fleet telemetry (active binds, total messages, uptime) |
+| `GET /admin/operators` | Per-operator snapshot (accounts, bind types, active binds, messages seen) |
+| `GET /admin/sessions` | Active connected ESME client sockets |
+| `POST /admin/sessions/{id}/disconnect` | Forcibly close a client socket to simulate link drops |
+| `GET /admin/events` | Recent simulator events ring buffer (`?limit=100`) |
+| `GET /admin/config` | Active parsed runtime configuration |
+| `POST /admin/operators/{name}/mo` | Inject a mobile-originated SMS: `{"source","dest","text","data_coding"}` |
 
 ## Metrics
 

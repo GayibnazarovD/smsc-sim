@@ -21,6 +21,8 @@ import (
 
 // Server owns every operator listener.
 type Server struct {
+	cfg       *config.Config
+	startTime time.Time
 	log       *slog.Logger
 	m         *metrics.Metrics
 	operators []*Operator
@@ -29,6 +31,10 @@ type Server struct {
 	mu        sync.Mutex
 	sessions  map[*session]struct{}
 	accepting bool
+
+	eventsMu  sync.RWMutex
+	events    []Event
+	maxEvents int
 
 	wg sync.WaitGroup
 }
@@ -40,20 +46,103 @@ func New(cfg *config.Config, log *slog.Logger, m *metrics.Metrics) *Server {
 		seed = time.Now().UnixNano()
 	}
 	srv := &Server{
-		log:      log,
-		m:        m,
-		sessions: map[*session]struct{}{},
+		cfg:       cfg,
+		startTime: time.Now(),
+		log:       log,
+		m:         m,
+		sessions:  map[*session]struct{}{},
+		maxEvents: 250,
 	}
 	// Give each operator a disjoint seed region so their RNG streams don't alias.
 	base := rand.New(rand.NewSource(seed))
 	for _, oc := range cfg.Operators {
-		srv.operators = append(srv.operators, newOperator(oc, base.Int63(), log, m))
+		srv.operators = append(srv.operators, newOperator(oc, base.Int63(), log, m, srv))
 	}
 	return srv
 }
 
 // Operators exposes the operator list for the admin API.
 func (s *Server) Operators() []*Operator { return s.operators }
+
+// Config returns the active simulator configuration.
+func (s *Server) Config() *config.Config { return s.cfg }
+
+// StartTime returns the timestamp when the server was created.
+func (s *Server) StartTime() time.Time { return s.startTime }
+
+// Uptime returns how long the server has been running.
+func (s *Server) Uptime() time.Duration { return time.Since(s.startTime) }
+
+// RecordEvent appends an event to the circular ring buffer. Safe for concurrent use.
+func (s *Server) RecordEvent(operator, eventType, level, message, details string) {
+	if s == nil {
+		return
+	}
+	s.eventsMu.Lock()
+	defer s.eventsMu.Unlock()
+
+	ev := Event{
+		ID:       fmt.Sprintf("ev-%d", time.Now().UnixNano()),
+		Time:     time.Now(),
+		Operator: operator,
+		Type:     eventType,
+		Level:    level,
+		Message:  message,
+		Details:  details,
+	}
+	s.events = append(s.events, ev)
+	if len(s.events) > s.maxEvents {
+		s.events = s.events[len(s.events)-s.maxEvents:]
+	}
+}
+
+// Events returns the most recent events up to limit, newest first.
+func (s *Server) Events(limit int) []Event {
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+
+	n := len(s.events)
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+	out := make([]Event, limit)
+	for i := 0; i < limit; i++ {
+		out[i] = s.events[n-1-i]
+	}
+	return out
+}
+
+// Sessions returns snapshots of all currently open sessions across all operators.
+func (s *Server) Sessions() []SessionSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]SessionSnapshot, 0, len(s.sessions))
+	for sess := range s.sessions {
+		out = append(out, sess.describe())
+	}
+	return out
+}
+
+// DisconnectSession closes an active session by its ID.
+func (s *Server) DisconnectSession(id string) error {
+	s.mu.Lock()
+	var target *session
+	for sess := range s.sessions {
+		if sess.id == id {
+			target = sess
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if target == nil {
+		return fmt.Errorf("session %q not found", id)
+	}
+	target.close()
+	s.RecordEvent(target.op.cfg.Name, "disconnect", "warn", fmt.Sprintf("Admin disconnected session %s", id), target.remoteAddr)
+	return nil
+}
 
 // Start opens a listener for every operator and begins accepting connections.
 func (s *Server) Start() error {
@@ -72,6 +161,7 @@ func (s *Server) Start() error {
 		s.wg.Add(1)
 		go s.acceptLoop(op, ln)
 		op.log.Info("listening", "addr", ln.Addr().String())
+		s.RecordEvent(op.cfg.Name, "listen", "info", fmt.Sprintf("Listening on %s", ln.Addr().String()), op.cfg.SMPPVersion)
 	}
 	return nil
 }
@@ -159,7 +249,11 @@ func (s *Server) InjectMO(operator, source, dest, text string, dataCoding uint8)
 		ShortMessage: []byte(text),
 	}
 	target := sessions[op.newRNG().Intn(len(sessions))]
-	return target.sendMO(sm)
+	err := target.sendMO(sm)
+	if err == nil {
+		s.RecordEvent(operator, "mo", "success", fmt.Sprintf("MO message injected to %s", dest), fmt.Sprintf("Source: %s | Text: %s", source, text))
+	}
+	return err
 }
 
 // Shutdown stops accepting, closes every session and waits for goroutines to

@@ -21,6 +21,7 @@ type Operator struct {
 	cfg config.Operator
 	log *slog.Logger
 	m   *metrics.Metrics
+	srv *Server
 
 	bucket  *throttle.Bucket // nil when no rate limit is configured
 	limited bool
@@ -31,6 +32,7 @@ type Operator struct {
 	seedBase int64
 	seqSeed  atomic.Int64
 	msgSeq   atomic.Uint64
+	sessSeq  atomic.Uint64
 
 	mu        sync.Mutex
 	sessions  map[*session]struct{}
@@ -46,11 +48,12 @@ type concatEntry struct {
 	when time.Time
 }
 
-func newOperator(cfg config.Operator, seedBase int64, log *slog.Logger, m *metrics.Metrics) *Operator {
+func newOperator(cfg config.Operator, seedBase int64, log *slog.Logger, m *metrics.Metrics, srv *Server) *Operator {
 	op := &Operator{
 		cfg:      cfg,
 		log:      log.With("operator", cfg.Name, "listen", cfg.Listen),
 		m:        m,
+		srv:      srv,
 		dlr:      dlr.New(cfg.DLR),
 		seedBase: seedBase,
 		sessions: map[*session]struct{}{},
@@ -241,19 +244,32 @@ func (op *Operator) receiverSessions() []*session {
 	return out
 }
 
+// Sessions returns snapshots of all currently open sessions for this operator.
+func (op *Operator) Sessions() []SessionSnapshot {
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	out := make([]SessionSnapshot, 0, len(op.sessions))
+	for s := range op.sessions {
+		out = append(out, s.describe())
+	}
+	return out
+}
+
 // Snapshot is a read-only view of an operator for the admin API.
 type Snapshot struct {
-	Name         string   `json:"name"`
-	Listen       string   `json:"listen"`
-	SMPPVersion  string   `json:"smpp_version"`
-	Accounts     []string `json:"accounts"`
-	BindTypes    []string `json:"bind_types"`
-	MaxBinds     int      `json:"max_binds"`
-	WindowSize   int      `json:"window_size"`
-	RateLimited  bool     `json:"rate_limited"`
-	ActiveBinds  int      `json:"active_binds"`
-	DLREnabled   bool     `json:"dlr_enabled"`
-	MessagesSeen uint64   `json:"messages_seen"`
+	Name          string   `json:"name"`
+	Listen        string   `json:"listen"`
+	SMPPVersion   string   `json:"smpp_version"`
+	Accounts      []string `json:"accounts"`
+	BindTypes     []string `json:"bind_types"`
+	MaxBinds      int      `json:"max_binds"`
+	WindowSize    int      `json:"window_size"`
+	RateLimited   bool     `json:"rate_limited"`
+	ThrottleTPS   float64  `json:"throttle_tps,omitempty"`
+	ThrottleBurst int      `json:"throttle_burst,omitempty"`
+	ActiveBinds   int      `json:"active_binds"`
+	DLREnabled    bool     `json:"dlr_enabled"`
+	MessagesSeen  uint64   `json:"messages_seen"`
 }
 
 // Describe returns a read-only snapshot of the operator for the admin API.
@@ -269,17 +285,20 @@ func (op *Operator) Describe() Snapshot {
 	if len(bt) == 0 {
 		bt = []string{"tx", "rx", "trx"}
 	}
+	tps, burst, _ := op.cfg.Throttle.Rate()
 	return Snapshot{
-		Name:         op.cfg.Name,
-		Listen:       op.cfg.Listen,
-		SMPPVersion:  op.cfg.SMPPVersion,
-		Accounts:     accts,
-		BindTypes:    bt,
-		MaxBinds:     op.cfg.MaxBinds,
-		WindowSize:   op.cfg.WindowSize,
-		RateLimited:  op.limited,
-		ActiveBinds:  binds,
-		DLREnabled:   op.dlr.Enabled(),
-		MessagesSeen: op.msgSeq.Load(),
+		Name:          op.cfg.Name,
+		Listen:        op.cfg.Listen,
+		SMPPVersion:   op.cfg.SMPPVersion,
+		Accounts:      accts,
+		BindTypes:     bt,
+		MaxBinds:      op.cfg.MaxBinds,
+		WindowSize:    op.cfg.WindowSize,
+		RateLimited:   op.limited,
+		ThrottleTPS:   tps,
+		ThrottleBurst: int(burst),
+		ActiveBinds:   binds,
+		DLREnabled:    op.dlr.Enabled(),
+		MessagesSeen:  op.msgSeq.Load(),
 	}
 }

@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>smsc-sim | Fleet Admin Dashboard</title>
+  <meta name="description" content="Modern Multi-Operator SMPP SMSC Simulator Web Admin UI">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/ui/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📡</text></svg>">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header" id="app-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"></path>
+            <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"></path>
+            <circle cx="12" cy="12" r="2"></circle>
+            <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"></path>
+            <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"></path>
+          </svg>
+          <div class="brand-text">
+            <span class="brand-title">smsc-sim</span>
+            <span class="brand-subtitle">SMPP Fleet Simulator</span>
+          </div>
+        </div>
+        <div class="system-status-badge" id="system-status-badge">
+          <span class="pulse-dot"></span>
+          <span class="status-label" id="status-label">ONLINE</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="telemetry-pill" id="uptime-pill">
+          <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span class="pill-label">Uptime:</span>
+          <span class="pill-val" id="telemetry-uptime">0s</span>
+        </div>
+
+        <div class="refresh-controls">
+          <label for="poll-interval-select" class="sr-only">Refresh Rate</label>
+          <select id="poll-interval-select" class="ctrl-select" title="Auto-refresh interval">
+            <option value="2000" selected>2s</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+            <option value="0">Paused</option>
+          </select>
+          <button id="toggle-refresh-btn" class="ctrl-btn" title="Pause or Resume auto refresh">
+            <svg id="pause-icon" class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="6" y="4" width="4" height="16"></rect>
+              <rect x="14" y="4" width="4" height="16"></rect>
+            </svg>
+            <svg id="play-icon" class="icon-sm hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </button>
+          <button id="refresh-now-btn" class="ctrl-btn" title="Refresh Now">
+            <svg class="icon-sm refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Bar -->
+    <nav class="app-nav" id="app-nav">
+      <div class="nav-tabs">
+        <button class="nav-tab active" id="tab-btn-overview" data-view="overview">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          Fleet Overview
+        </button>
+        <button class="nav-tab" id="tab-btn-sessions" data-view="sessions">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+          </svg>
+          Active Sessions
+          <span class="tab-badge" id="badge-sessions-count">0</span>
+        </button>
+        <button class="nav-tab" id="tab-btn-mo" data-view="mo">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+            <polyline points="22,6 12,13 2,6"></polyline>
+          </svg>
+          MO Studio
+        </button>
+        <button class="nav-tab" id="tab-btn-events" data-view="events">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          Live Activity
+          <span class="tab-badge" id="badge-events-count">0</span>
+        </button>
+        <button class="nav-tab" id="tab-btn-config" data-view="config">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          Configuration
+        </button>
+      </div>
+    </nav>
+
+    <!-- KPI Summary Cards -->
+    <section class="kpi-ribbon" id="kpi-ribbon">
+      <div class="kpi-card" id="kpi-card-operators">
+        <div class="kpi-header">
+          <span class="kpi-title">OPERATORS</span>
+          <span class="kpi-icon-wrap blue">📡</span>
+        </div>
+        <div class="kpi-body">
+          <span class="kpi-value" id="kpi-operators-count">0</span>
+          <span class="kpi-sub" id="kpi-operators-sub">Active Listeners</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-binds">
+        <div class="kpi-header">
+          <span class="kpi-title">ACTIVE BINDS</span>
+          <span class="kpi-icon-wrap green">⚡</span>
+        </div>
+        <div class="kpi-body">
+          <span class="kpi-value" id="kpi-binds-count">0</span>
+          <span class="kpi-sub" id="kpi-binds-sub">TX: 0 | RX: 0 | TRX: 0</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-messages">
+        <div class="kpi-header">
+          <span class="kpi-title">MESSAGES SEEN</span>
+          <span class="kpi-icon-wrap purple">📨</span>
+        </div>
+        <div class="kpi-body">
+          <span class="kpi-value" id="kpi-messages-count">0</span>
+          <span class="kpi-sub">Total submit_sm received</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-throttled">
+        <div class="kpi-header">
+          <span class="kpi-title">RATE LIMITING</span>
+          <span class="kpi-icon-wrap amber">⏳</span>
+        </div>
+        <div class="kpi-body">
+          <span class="kpi-value" id="kpi-throttled-count">0</span>
+          <span class="kpi-sub" id="kpi-throttled-sub">Operators Limited</span>
+        </div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-dlr">
+        <div class="kpi-header">
+          <span class="kpi-title">DLR ENGINE</span>
+          <span class="kpi-icon-wrap cyan">📬</span>
+        </div>
+        <div class="kpi-body">
+          <span class="kpi-value" id="kpi-dlr-status">Enabled</span>
+          <span class="kpi-sub" id="kpi-dlr-sub">Delivering receipts</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Views Container -->
+    <main class="app-main" id="app-main">
+      
+      <!-- VIEW 1: FLEET OVERVIEW -->
+      <section class="view-panel active" id="view-overview">
+        <div class="panel-toolbar">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="filter-operator-input" placeholder="Filter operators by name or port..." class="search-input">
+          </div>
+          <div class="toolbar-stats" id="fleet-stats-summary">
+            Showing <span id="visible-operators-count">0</span> of <span id="total-operators-count">0</span> operators
+          </div>
+        </div>
+
+        <div class="operators-grid" id="operators-grid">
+          <!-- Dynamically populated operator cards -->
+        </div>
+      </section>
+
+      <!-- VIEW 2: ACTIVE SESSIONS -->
+      <section class="view-panel" id="view-sessions">
+        <div class="panel-toolbar">
+          <div class="panel-heading">
+            <h2 class="panel-title">Connected ESME Clients</h2>
+            <p class="panel-subtitle">Real-time inspection of bound transceiver, transmitter, and receiver sockets.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary btn-sm" id="btn-refresh-sessions">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+              </svg>
+              Refresh Sessions
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-responsive">
+            <table class="data-table" id="sessions-table">
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>Operator</th>
+                  <th>Remote Client</th>
+                  <th>System ID</th>
+                  <th>Mode</th>
+                  <th>In-Flight</th>
+                  <th>Connected</th>
+                  <th>Last PDU Rx</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-tbody">
+                <!-- Dynamically populated session rows -->
+              </tbody>
+            </table>
+          </div>
+          <div class="empty-state hidden" id="sessions-empty-state">
+            <div class="empty-icon">🔌</div>
+            <h3>No Active ESME Sessions</h3>
+            <p>Connect an SMPP client (like textup router-service or fiorix/go-smpp) to any operator port to observe active binds here.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: MO STUDIO -->
+      <section class="view-panel" id="view-mo">
+        <div class="mo-studio-grid">
+          <!-- Left: Injector Form -->
+          <div class="card form-card">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <h2 class="card-title">Send Mobile-Originated (MO) SMS</h2>
+                <p class="card-subtitle">Push deliver_sm PDUs to bound ESME clients through the selected operator.</p>
+              </div>
+            </div>
+
+            <form id="mo-form" class="mo-form">
+              <div class="form-group">
+                <label for="mo-operator-select" class="form-label">Target Operator</label>
+                <select id="mo-operator-select" class="form-select" required>
+                  <option value="" disabled selected>Select an operator...</option>
+                </select>
+                <div class="field-hint" id="mo-operator-hint">Choose an operator with bound RX or TRX sessions.</div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label for="mo-source-input" class="form-label">Sender MSISDN (Source)</label>
+                  <input type="text" id="mo-source-input" class="form-input" value="+998901234567" placeholder="+99890..." required>
+                </div>
+                <div class="form-group col-6">
+                  <label for="mo-dest-input" class="form-label">Recipient MSISDN (Dest)</label>
+                  <input type="text" id="mo-dest-input" class="form-input" value="+998909876543" placeholder="+99899..." required>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label for="mo-preset-select" class="form-label">Message Template</label>
+                  <select id="mo-preset-select" class="form-select">
+                    <option value="custom">Custom Message</option>
+                    <option value="otp">OTP Verification Code</option>
+                    <option value="delivery">Package Delivery Notice</option>
+                    <option value="bank">Banking Card Transaction</option>
+                    <option value="promo">Promotional Campaign</option>
+                  </select>
+                </div>
+                <div class="form-group col-6">
+                  <label for="mo-encoding-select" class="form-label">Data Coding</label>
+                  <select id="mo-encoding-select" class="form-select">
+                    <option value="0" selected>0: Default (GSM 7-bit)</option>
+                    <option value="8">8: UCS-2 (Unicode/Cyrillic)</option>
+                    <option value="4">4: 8-bit Binary Data</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="label-with-counter">
+                  <label for="mo-text-input" class="form-label">Message Text</label>
+                  <span class="char-counter" id="mo-char-counter">0 / 160 chars (1 SMS)</span>
+                </div>
+                <textarea id="mo-text-input" class="form-textarea" rows="4" placeholder="Enter SMS text to inject into the ESME receiver..." required></textarea>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" id="mo-submit-btn" class="btn btn-primary">
+                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                  Inject MO Deliver_SM
+                </button>
+                <button type="button" id="mo-reset-btn" class="btn btn-secondary">Reset</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Right: MO History & Reference -->
+          <div class="card info-card">
+            <div class="card-header">
+              <h2 class="card-title">Recent Injections</h2>
+              <button id="mo-clear-history-btn" class="btn btn-ghost btn-xs">Clear</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table small-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Operator</th>
+                    <th>Recipient</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="mo-history-tbody">
+                  <!-- Dynamically populated recent MO injections -->
+                </tbody>
+              </table>
+              <div class="empty-state small hidden" id="mo-empty-history">
+                <p>No messages injected in this session yet.</p>
+              </div>
+            </div>
+
+            <div class="doc-callout">
+              <h3 class="callout-title">💡 How MO Testing Works</h3>
+              <p class="callout-text">
+                This triggers a real <code>deliver_sm</code> PDU sent over the socket to connected SMPP transceivers or receivers. Your backend application (e.g. router-service / sms-service) will receive it as an inbound user SMS.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: LIVE EVENTS -->
+      <section class="view-panel" id="view-events">
+        <div class="panel-toolbar">
+          <div class="filter-group">
+            <label for="event-filter-op" class="sr-only">Filter by Operator</label>
+            <select id="event-filter-op" class="ctrl-select">
+              <option value="all">All Operators</option>
+            </select>
+
+            <label for="event-filter-type" class="sr-only">Filter by Type</label>
+            <select id="event-filter-type" class="ctrl-select">
+              <option value="all">All Event Types</option>
+              <option value="bind">Binds</option>
+              <option value="unbind">Unbinds</option>
+              <option value="throttled">Throttling</option>
+              <option value="queue_full">Queue Full</option>
+              <option value="dlr">DLR Receipts</option>
+              <option value="mo">MO Injections</option>
+              <option value="disconnect">Disconnects</option>
+            </select>
+          </div>
+
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary btn-sm" id="btn-clear-events">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              Clear Log
+            </button>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-responsive">
+            <table class="data-table" id="events-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">Timestamp</th>
+                  <th style="width: 120px;">Operator</th>
+                  <th style="width: 110px;">Type</th>
+                  <th>Summary</th>
+                  <th>Details / Client</th>
+                </tr>
+              </thead>
+              <tbody id="events-tbody">
+                <!-- Dynamically populated event stream -->
+              </tbody>
+            </table>
+          </div>
+          <div class="empty-state hidden" id="events-empty-state">
+            <div class="empty-icon">📜</div>
+            <h3>No Events Recorded Yet</h3>
+            <p>Events will appear here as clients bind, submit messages, experience throttling, or receive delivery receipts.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: CONFIG INSPECTOR -->
+      <section class="view-panel" id="view-config">
+        <div class="panel-toolbar">
+          <div class="panel-heading">
+            <h2 class="panel-title">Active Configuration & Protocols</h2>
+            <p class="panel-subtitle">Parsed YAML runtime configuration and simulator capabilities.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary btn-sm" id="btn-copy-config">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy JSON
+            </button>
+          </div>
+        </div>
+
+        <div class="config-grid">
+          <div class="card config-viewer-card">
+            <div class="code-header">
+              <span class="code-title">Configuration JSON</span>
+              <span class="code-lang">JSON</span>
+            </div>
+            <pre class="code-block" id="config-json-block"><code>Loading configuration...</code></pre>
+          </div>
+
+          <div class="card specs-card">
+            <div class="card-header">
+              <h2 class="card-title">Simulator Capabilities</h2>
+            </div>
+            <div class="specs-body">
+              <div class="spec-row">
+                <span class="spec-key">Protocol Versions</span>
+                <span class="spec-val">SMPP v3.3, SMPP v3.4</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">Supported Operations</span>
+                <span class="spec-val">bind_*, unbind, submit_sm, deliver_sm, enquire_link</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">Rate Limit Status</span>
+                <span class="spec-val">Token Bucket → ESME_RTHROTTLED (0x58)</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">Window Enforcement</span>
+                <span class="spec-val">Sliding Window → ESME_RMSGQFUL (0x14)</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">DLR Generator</span>
+                <span class="spec-val">Weighted DELIVRD / UNDELIV / EXPIRED / REJECTD</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">Multipart Concatenation</span>
+                <span class="spec-val">UDH reference + SAR TLV, shared msgid support</span>
+              </div>
+              <div class="spec-row">
+                <span class="spec-key">Metrics Exporter</span>
+                <span class="spec-val">Prometheus /metrics on configured port</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Disconnect Modal -->
+    <div class="modal-backdrop hidden" id="disconnect-modal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Confirm Disconnect</h3>
+          <button class="modal-close-btn" id="modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to forcibly terminate ESME session <strong id="modal-session-id"></strong>?</p>
+          <p class="text-muted">The client socket will be closed immediately, simulating a carrier disconnection.</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="modal-cancel-btn">Cancel</button>
+          <button class="btn btn-danger" id="modal-confirm-btn">Disconnect Socket</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>

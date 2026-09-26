@@ -96,6 +96,7 @@
     // Add/Edit Operator Modal
     operatorModal: document.getElementById('operator-modal'),
     operatorModalTitle: document.getElementById('operator-modal-title'),
+    opModalErrorAlert: document.getElementById('op-modal-error-alert'),
     opModalCloseBtn: document.getElementById('op-modal-close-btn'),
     opModalCancelBtn: document.getElementById('op-modal-cancel-btn'),
     opModalSaveBtn: document.getElementById('op-modal-save-btn'),
@@ -120,6 +121,7 @@
     // Delete Operator Modal
     deleteOpModal: document.getElementById('delete-operator-modal'),
     delOpModalName: document.getElementById('del-op-modal-name'),
+    delOpModalErrorAlert: document.getElementById('del-op-modal-error-alert'),
     delOpModalCloseBtn: document.getElementById('del-op-modal-close-btn'),
     delOpCancelBtn: document.getElementById('del-op-cancel-btn'),
     delOpConfirmBtn: document.getElementById('del-op-confirm-btn'),
@@ -848,6 +850,10 @@
 
   // Operator CRUD UI Handlers
   function openAddOperatorModal() {
+    if (el.opModalErrorAlert) {
+      el.opModalErrorAlert.classList.add('hidden');
+      el.opModalErrorAlert.textContent = '';
+    }
     el.opFormIsEdit.value = 'false';
     el.opFormOldName.value = '';
     el.operatorModalTitle.textContent = 'Add New Connection';
@@ -866,6 +872,10 @@
   }
 
   async function openEditOperatorModal(opName) {
+    if (el.opModalErrorAlert) {
+      el.opModalErrorAlert.classList.add('hidden');
+      el.opModalErrorAlert.textContent = '';
+    }
     el.opFormIsEdit.value = 'true';
     el.opFormOldName.value = opName;
     el.operatorModalTitle.textContent = `Edit Connection: ${opName}`;
@@ -933,11 +943,20 @@
 
   async function handleOperatorSubmit(e) {
     e.preventDefault();
+    if (el.opModalErrorAlert) {
+      el.opModalErrorAlert.classList.add('hidden');
+      el.opModalErrorAlert.textContent = '';
+    }
+
     const isEdit = el.opFormIsEdit.value === 'true';
     const oldName = el.opFormOldName.value;
 
     const name = el.opNameInput.value.trim();
-    const listen = el.opListenInput.value.trim();
+    let listen = el.opListenInput.value.trim();
+    if (listen && !listen.includes(':')) {
+      listen = ':' + listen;
+      el.opListenInput.value = listen;
+    }
     const smppVersion = el.opVersionSelect.value;
     const windowSize = parseInt(el.opWindowInput.value, 10) || 10;
 
@@ -952,7 +971,12 @@
     });
 
     if (accounts.length === 0) {
-      showToast('At least one account (system_id & password) is required', 'error');
+      const errMsg = 'At least one account (system_id & password) is required';
+      if (el.opModalErrorAlert) {
+        el.opModalErrorAlert.textContent = errMsg;
+        el.opModalErrorAlert.classList.remove('hidden');
+      }
+      showToast(errMsg, 'error');
       return;
     }
 
@@ -984,7 +1008,7 @@
       const url = isEdit ? `/admin/operators/${encodeURIComponent(oldName)}` : '/admin/operators';
       const method = isEdit ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1000,6 +1024,12 @@
       await fetchOverview();
       await fetchEvents();
     } catch (err) {
+      if (el.opModalErrorAlert) {
+        el.opModalErrorAlert.textContent = err.message;
+        el.opModalErrorAlert.classList.remove('hidden');
+        const scrollBody = el.operatorModal.querySelector('.modal-scroll');
+        if (scrollBody) scrollBody.scrollTop = 0;
+      }
       showToast(err.message, 'error');
     } finally {
       el.opModalSaveBtn.disabled = false;
@@ -1007,6 +1037,10 @@
   }
 
   function openDeleteOpModal(opName) {
+    if (el.delOpModalErrorAlert) {
+      el.delOpModalErrorAlert.classList.add('hidden');
+      el.delOpModalErrorAlert.textContent = '';
+    }
     state.targetDeleteOpName = opName;
     el.delOpModalName.textContent = opName;
     el.deleteOpModal.classList.remove('hidden');
@@ -1036,6 +1070,10 @@
       await fetchOverview();
       await fetchEvents();
     } catch (err) {
+      if (el.delOpModalErrorAlert) {
+        el.delOpModalErrorAlert.textContent = err.message;
+        el.delOpModalErrorAlert.classList.remove('hidden');
+      }
       showToast('Delete failed: ' + err.message, 'error');
     } finally {
       el.delOpConfirmBtn.disabled = false;

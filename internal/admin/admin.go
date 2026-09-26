@@ -453,9 +453,14 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON body: " + err.Error()})
 			return
 		}
+		op.Name = strings.TrimSpace(op.Name)
+		op.Listen = strings.TrimSpace(op.Listen)
 		if op.Name == "" || op.Listen == "" {
 			writeJSON(w, http.StatusBadRequest, errBody{"name and listen address are required"})
 			return
+		}
+		if !strings.Contains(op.Listen, ":") {
+			op.Listen = ":" + op.Listen
 		}
 		if op.SMPPVersion == "" {
 			op.SMPPVersion = "3.4"
@@ -463,6 +468,14 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		if len(op.Accounts) == 0 {
 			writeJSON(w, http.StatusBadRequest, errBody{"at least one account (system_id and password) is required"})
 			return
+		}
+		if op.DLR.IsEnabled() && len(op.DLR.Outcomes) == 0 {
+			op.DLR.Outcomes = map[string]int{
+				"DELIVRD": 92,
+				"UNDELIV": 5,
+				"EXPIRED": 2,
+				"REJECTD": 1,
+			}
 		}
 
 		if st != nil {
@@ -514,9 +527,22 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		if op.Name == "" {
 			op.Name = name
 		}
+		op.Name = strings.TrimSpace(op.Name)
+		op.Listen = strings.TrimSpace(op.Listen)
 		if op.Listen == "" {
 			writeJSON(w, http.StatusBadRequest, errBody{"listen address is required"})
 			return
+		}
+		if !strings.Contains(op.Listen, ":") {
+			op.Listen = ":" + op.Listen
+		}
+		if op.DLR.IsEnabled() && len(op.DLR.Outcomes) == 0 {
+			op.DLR.Outcomes = map[string]int{
+				"DELIVRD": 92,
+				"UNDELIV": 5,
+				"EXPIRED": 2,
+				"REJECTD": 1,
+			}
 		}
 
 		if st != nil {

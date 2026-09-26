@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +96,41 @@ func TestParseRejectsBadConfig(t *testing.T) {
 		if _, err := Parse([]byte(src)); err == nil {
 			t.Errorf("%s: expected error, got nil", name)
 		}
+	}
+}
+
+func TestDurationJSON(t *testing.T) {
+	var d Duration
+	if err := json.Unmarshal([]byte(`"2s"`), &d); err != nil {
+		t.Fatalf("unmarshal '2s': %v", err)
+	}
+	if d.D() != 2*time.Second {
+		t.Errorf("got %v, want 2s", d.D())
+	}
+
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(b) != `"2s"` {
+		t.Errorf("got %s, want \"2s\"", string(b))
+	}
+
+	// Test Operator with DLR Range in JSON
+	opJSON := `{
+		"name": "op1",
+		"listen": ":2775",
+		"accounts": [{"system_id": "u", "password": "p"}],
+		"dlr": {
+			"enabled": true,
+			"delay": {"min": "3s", "max": "20s"}
+		}
+	}`
+	var op Operator
+	if err := json.Unmarshal([]byte(opJSON), &op); err != nil {
+		t.Fatalf("unmarshal opJSON: %v", err)
+	}
+	if op.DLR.Delay.Min.D() != 3*time.Second || op.DLR.Delay.Max.D() != 20*time.Second {
+		t.Errorf("dlr delay mismatch: min=%v, max=%v", op.DLR.Delay.Min.D(), op.DLR.Delay.Max.D())
 	}
 }

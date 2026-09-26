@@ -535,6 +535,7 @@
         </div>
         <form id="operator-form">
           <div class="modal-body modal-scroll">
+            <div class="alert alert-danger hidden" id="op-modal-error-alert" style="margin-bottom: 16px;"></div>
             <input type="hidden" id="op-form-is-edit" value="false">
             <input type="hidden" id="op-form-old-name" value="">
 
@@ -633,6 +634,7 @@
           <button class="modal-close-btn" id="del-op-modal-close-btn">&times;</button>
         </div>
         <div class="modal-body">
+          <div class="alert alert-danger hidden" id="del-op-modal-error-alert" style="margin-bottom: 16px;"></div>
           <p>Are you sure you want to delete operator <strong id="del-op-modal-name"></strong>?</p>
           <p class="text-muted">This will immediately shut down its TCP socket and disconnect all active ESME sessions.</p>
         </div>

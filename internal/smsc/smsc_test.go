@@ -267,3 +267,50 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestDynamicOperatorLifecycle(t *testing.T) {
+	o1 := op("op1")
+	srv := startServer(t, []config.Operator{o1})
+
+	// Add second operator dynamically
+	o2 := op("op2")
+	o2.Listen = "127.0.0.1:0"
+	if err := srv.AddOperator(o2); err != nil {
+		t.Fatalf("AddOperator: %v", err)
+	}
+	if len(srv.Operators()) != 2 {
+		t.Fatalf("expected 2 operators, got %d", len(srv.Operators()))
+	}
+
+	target := srv.OperatorByName("op2")
+	if target == nil {
+		t.Fatalf("expected op2 to exist")
+	}
+
+	// Dial op2
+	c := dial(t, target.Addr())
+	c.bind(t, "esme", "pw")
+	time.Sleep(30 * time.Millisecond)
+	if target.Describe().ActiveBinds != 1 {
+		t.Fatalf("expected 1 active bind on op2, got %d", target.Describe().ActiveBinds)
+	}
+
+	// Update op2 rate limit
+	o2Updated := o2
+	o2Updated.Throttle = config.Throttle{TPS: 300, Burst: 300}
+	if err := srv.UpdateOperator("op2", o2Updated); err != nil {
+		t.Fatalf("UpdateOperator: %v", err)
+	}
+	if srv.OperatorByName("op2").Describe().ThrottleTPS != 300 {
+		t.Fatalf("expected TPS to be 300")
+	}
+
+	// Delete op2
+	if err := srv.DeleteOperator("op2"); err != nil {
+		t.Fatalf("DeleteOperator: %v", err)
+	}
+	if len(srv.Operators()) != 1 {
+		t.Fatalf("expected 1 operator after delete, got %d", len(srv.Operators()))
+	}
+}
+

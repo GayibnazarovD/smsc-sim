@@ -15,6 +15,7 @@ import (
 
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/config"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/smsc"
+	"github.com/dilshodgayibnazarov/smsc-sim/internal/store"
 )
 
 //go:embed ui/*
@@ -35,17 +36,21 @@ type OverviewSnapshot struct {
 
 // Handler returns the admin API and Web UI mux.
 //
-//	GET  /                               -> Web Admin UI dashboard
-//	GET  /ui/*                           -> Static UI assets (CSS, JS)
-//	GET  /healthz                        -> 200 "ok"
-//	GET  /admin/overview                 -> Aggregate system overview
-//	GET  /admin/operators                -> [ { operator snapshot } ]
-//	GET  /admin/sessions                 -> [ { session snapshot } ]
-//	POST /admin/sessions/{id}/disconnect -> Disconnect an active ESME session
-//	GET  /admin/events                   -> [ { event } ]
-//	GET  /admin/config                   -> Active YAML config
-//	POST /admin/operators/{name}/mo     -> Inject a mobile-originated message
-func Handler(srv *smsc.Server, log *slog.Logger) http.Handler {
+//	GET    /                               -> Web Admin UI dashboard
+//	GET    /ui/*                           -> Static UI assets (CSS, JS)
+//	GET    /healthz                        -> 200 "ok"
+//	GET    /admin/overview                 -> Aggregate system overview
+//	GET    /admin/operators                -> [ { operator snapshot } ]
+//	POST   /admin/operators                -> Create new operator (DB & runtime)
+//	GET    /admin/operators/{name}         -> Get single operator config
+//	PUT    /admin/operators/{name}         -> Update operator (DB & runtime)
+//	DELETE /admin/operators/{name}         -> Delete operator (DB & runtime)
+//	GET    /admin/sessions                 -> [ { session snapshot } ]
+//	POST   /admin/sessions/{id}/disconnect -> Disconnect an active ESME session
+//	GET    /admin/events                   -> [ { event } ]
+//	GET    /admin/config                   -> Active YAML config
+//	POST   /admin/operators/{name}/mo     -> Inject a mobile-originated message
+func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	uiSub, err := fs.Sub(uiFS, "ui")
@@ -113,11 +118,159 @@ func Handler(srv *smsc.Server, log *slog.Logger) http.Handler {
 	})
 
 	mux.HandleFunc("GET /admin/operators", func(w http.ResponseWriter, _ *http.Request) {
+		if st != nil {
+			stored, err := st.ListOperators()
+			if err == nil && len(stored) > 0 {
+				out := make([]smsc.Snapshot, 0, len(stored))
+				for _, sop := range stored {
+					accts := make([]string, len(sop.Accounts))
+					for i, a := range sop.Accounts {
+						accts[i] = a.SystemID
+					}
+					bt := sop.BindTypes
+					if len(bt) == 0 {
+						bt = []string{"tx", "rx", "trx"}
+					}
+					tps, burst, limited := sop.Throttle.Rate()
+					var activeBinds int
+					var msgsSeen uint64
+					if liveOp := srv.OperatorByName(sop.Name); liveOp != nil {
+						snap := liveOp.Describe()
+						activeBinds = snap.ActiveBinds
+						msgsSeen = snap.MessagesSeen
+					}
+					out = append(out, smsc.Snapshot{
+						Name:          sop.Name,
+						Listen:        sop.Listen,
+						SMPPVersion:   sop.SMPPVersion,
+						Accounts:      accts,
+						BindTypes:     bt,
+						MaxBinds:      sop.MaxBinds,
+						WindowSize:    sop.WindowSize,
+						RateLimited:   limited,
+						ThrottleTPS:   tps,
+						ThrottleBurst: int(burst),
+						ActiveBinds:   activeBinds,
+						DLREnabled:    sop.DLR.IsEnabled(),
+						MessagesSeen:  msgsSeen,
+					})
+				}
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
+		}
+
 		out := make([]smsc.Snapshot, 0, len(srv.Operators()))
 		for _, op := range srv.Operators() {
 			out = append(out, op.Describe())
 		}
 		writeJSON(w, http.StatusOK, out)
+	})
+
+	mux.HandleFunc("POST /admin/operators", func(w http.ResponseWriter, r *http.Request) {
+		var op config.Operator
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&op); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON body: " + err.Error()})
+			return
+		}
+		if op.Name == "" || op.Listen == "" {
+			writeJSON(w, http.StatusBadRequest, errBody{"name and listen address are required"})
+			return
+		}
+		if op.SMPPVersion == "" {
+			op.SMPPVersion = "3.4"
+		}
+		if len(op.Accounts) == 0 {
+			writeJSON(w, http.StatusBadRequest, errBody{"at least one account (system_id and password) is required"})
+			return
+		}
+
+		if st != nil {
+			if err := st.CreateOperator(op); err != nil {
+				writeJSON(w, http.StatusConflict, errBody{"database error: " + err.Error()})
+				return
+			}
+		}
+
+		if err := srv.AddOperator(op); err != nil {
+			if st != nil {
+				_ = st.DeleteOperator(op.Name)
+			}
+			writeJSON(w, http.StatusInternalServerError, errBody{"failed to start operator: " + err.Error()})
+			return
+		}
+
+		log.Info("admin: created operator", "name", op.Name, "listen", op.Listen)
+		writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "name": op.Name})
+	})
+
+	mux.HandleFunc("GET /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if st != nil {
+			op, err := st.GetOperator(name)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, errBody{err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, op)
+			return
+		}
+
+		op := srv.OperatorByName(name)
+		if op == nil {
+			writeJSON(w, http.StatusNotFound, errBody{"operator not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, op.Config())
+	})
+
+	mux.HandleFunc("PUT /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		var op config.Operator
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&op); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON body: " + err.Error()})
+			return
+		}
+		if op.Name == "" {
+			op.Name = name
+		}
+		if op.Listen == "" {
+			writeJSON(w, http.StatusBadRequest, errBody{"listen address is required"})
+			return
+		}
+
+		if st != nil {
+			if err := st.UpdateOperator(name, op); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody{"database update error: " + err.Error()})
+				return
+			}
+		}
+
+		if err := srv.UpdateOperator(name, op); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{"runtime update error: " + err.Error()})
+			return
+		}
+
+		log.Info("admin: updated operator", "name", name, "newName", op.Name, "listen", op.Listen)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "name": op.Name})
+	})
+
+	mux.HandleFunc("DELETE /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if st != nil {
+			if err := st.DeleteOperator(name); err != nil {
+				writeJSON(w, http.StatusNotFound, errBody{"database delete error: " + err.Error()})
+				return
+			}
+		}
+
+		if err := srv.DeleteOperator(name); err != nil {
+			writeJSON(w, http.StatusNotFound, errBody{"delete error: " + err.Error()})
+			return
+		}
+
+		log.Info("admin: deleted operator", "name", name)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 	})
 
 	mux.HandleFunc("GET /admin/sessions", func(w http.ResponseWriter, _ *http.Request) {

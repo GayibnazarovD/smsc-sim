@@ -185,8 +185,17 @@
             </svg>
             <input type="text" id="filter-operator-input" placeholder="Filter operators by name or port..." class="search-input">
           </div>
-          <div class="toolbar-stats" id="fleet-stats-summary">
-            Showing <span id="visible-operators-count">0</span> of <span id="total-operators-count">0</span> operators
+          <div class="toolbar-actions">
+            <div class="toolbar-stats" id="fleet-stats-summary" style="display:inline-block; margin-right: 12px;">
+              Showing <span id="visible-operators-count">0</span> of <span id="total-operators-count">0</span> operators
+            </div>
+            <button class="btn btn-primary btn-sm" id="btn-add-operator">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Connection
+            </button>
           </div>
         </div>
 
@@ -496,6 +505,123 @@
       </div>
     </div>
   </div>
+
+    <!-- Add/Edit Connection Modal -->
+    <div class="modal-backdrop hidden" id="operator-modal">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-header">
+          <h3 class="modal-title" id="operator-modal-title">Add Connection</h3>
+          <button class="modal-close-btn" id="op-modal-close-btn">&times;</button>
+        </div>
+        <form id="operator-form">
+          <div class="modal-body modal-scroll">
+            <input type="hidden" id="op-form-is-edit" value="false">
+            <input type="hidden" id="op-form-old-name" value="">
+
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="op-name-input" class="form-label">Operator Name</label>
+                <input type="text" id="op-name-input" class="form-input" placeholder="e.g. Ucell, Beeline" required>
+              </div>
+              <div class="form-group col-6">
+                <label for="op-listen-input" class="form-label">Listen Address / Port</label>
+                <input type="text" id="op-listen-input" class="form-input font-mono" placeholder=":2775 or 127.0.0.1:2775" required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="op-version-select" class="form-label">SMPP Version</label>
+                <select id="op-version-select" class="form-select">
+                  <option value="3.4" selected>SMPP v3.4</option>
+                  <option value="3.3">SMPP v3.3</option>
+                </select>
+              </div>
+              <div class="form-group col-6">
+                <label for="op-window-input" class="form-label">Window Size (Max In-Flight)</label>
+                <input type="number" id="op-window-input" class="form-input" value="10" min="1" max="1000">
+              </div>
+            </div>
+
+            <!-- Credentials Section -->
+            <div class="form-section">
+              <div class="section-header">
+                <span class="section-title">Credentials (Accounts)</span>
+                <button type="button" class="btn btn-secondary btn-xs" id="btn-add-account">+ Add Account</button>
+              </div>
+              <div class="accounts-list" id="op-accounts-container">
+                <!-- Dynamic account rows -->
+              </div>
+            </div>
+
+            <!-- Rate Limiting Section -->
+            <div class="form-section">
+              <div class="section-header">
+                <span class="section-title">Throttle / Rate Limiting</span>
+                <label class="toggle-wrap">
+                  <input type="checkbox" id="op-rate-limited-checkbox" checked>
+                  <span class="toggle-label">Enable TPS Ceiling</span>
+                </label>
+              </div>
+              <div class="form-row" id="op-throttle-fields">
+                <div class="form-group col-6">
+                  <label for="op-tps-input" class="form-label">Target TPS</label>
+                  <input type="number" id="op-tps-input" class="form-input" value="100" min="1">
+                </div>
+                <div class="form-group col-6">
+                  <label for="op-burst-input" class="form-label">Burst Tokens</label>
+                  <input type="number" id="op-burst-input" class="form-input" value="100" min="1">
+                </div>
+              </div>
+            </div>
+
+            <!-- DLR Section -->
+            <div class="form-section">
+              <div class="section-header">
+                <span class="section-title">Delivery Receipts (DLR)</span>
+                <label class="toggle-wrap">
+                  <input type="checkbox" id="op-dlr-enabled-checkbox" checked>
+                  <span class="toggle-label">Generate DLR Receipts</span>
+                </label>
+              </div>
+              <div class="form-row" id="op-dlr-fields">
+                <div class="form-group col-6">
+                  <label for="op-dlr-min-input" class="form-label">Min Delay</label>
+                  <input type="text" id="op-dlr-min-input" class="form-input" value="2s">
+                </div>
+                <div class="form-group col-6">
+                  <label for="op-dlr-max-input" class="form-label">Max Delay</label>
+                  <input type="text" id="op-dlr-max-input" class="form-input" value="15s">
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="op-modal-cancel-btn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="op-modal-save-btn">Save Connection</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Delete Connection Modal -->
+    <div class="modal-backdrop hidden" id="delete-operator-modal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Delete Connection</h3>
+          <button class="modal-close-btn" id="del-op-modal-close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Are you sure you want to delete operator <strong id="del-op-modal-name"></strong>?</p>
+          <p class="text-muted">This will immediately shut down its TCP socket and disconnect all active ESME sessions.</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="del-op-cancel-btn">Cancel</button>
+          <button class="btn btn-danger" id="del-op-confirm-btn">Delete Connection</button>
+        </div>
+      </div>
+    </div>
 
   <script src="/ui/app.js"></script>
 </body>

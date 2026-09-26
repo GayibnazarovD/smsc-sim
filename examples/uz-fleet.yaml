@@ -8,7 +8,7 @@ seed: 42 # reproducible load runs
 
 log: { level: info, format: json }
 metrics: { listen: ":9090" }
-admin: { listen: ":8080" }
+admin: { listen: ":8081" }
 
 defaults:
   smpp_version: "3.4"

@@ -94,7 +94,7 @@ func (s *session) describe() SessionSnapshot {
 	lastRx := time.Unix(0, s.lastRx.Load())
 	return SessionSnapshot{
 		ID:          s.id,
-		Operator:    s.op.cfg.Name,
+		Operator:    s.op.Name(),
 		RemoteAddr:  s.remoteAddr,
 		SystemID:    s.systemID,
 		Mode:        s.getMode().String(),
@@ -139,7 +139,7 @@ func (s *session) serve() {
 			return
 		}
 		s.lastRx.Store(time.Now().UnixNano())
-		s.op.m.PDURx.WithLabelValues(s.op.cfg.Name, raw.Header.ID.String()).Inc()
+		s.op.m.PDURx.WithLabelValues(s.op.Name(), raw.Header.ID.String()).Inc()
 		if stop := s.dispatch(raw); stop {
 			return
 		}
@@ -160,7 +160,7 @@ func (s *session) dispatch(raw *smpp.RawPDU) (stop bool) {
 		// response to our heartbeat
 	case smpp.Unbind:
 		s.send(smpp.UnbindResp, smpp.ESME_ROK, raw.Header.Seq, nil)
-		s.op.srv.RecordEvent(s.op.cfg.Name, "unbind", "info", fmt.Sprintf("Account %q unbound", s.systemID), s.remoteAddr)
+		s.op.srv.RecordEvent(s.op.Name(), "unbind", "info", fmt.Sprintf("Account %q unbound", s.systemID), s.remoteAddr)
 		return true
 	case smpp.GenericNACK:
 		// ignore
@@ -171,7 +171,7 @@ func (s *session) dispatch(raw *smpp.RawPDU) (stop bool) {
 }
 
 func (s *session) handleBind(raw *smpp.RawPDU) (stop bool) {
-	name := s.op.cfg.Name
+	name := s.op.Name()
 	btype := bindTypeLabel(raw.Header.ID)
 
 	if s.getMode() != modeUnbound {
@@ -234,7 +234,7 @@ func (s *session) handleBind(raw *smpp.RawPDU) (stop bool) {
 }
 
 func (s *session) handleSubmit(raw *smpp.RawPDU) {
-	name := s.op.cfg.Name
+	name := s.op.Name()
 	if !s.canSubmit() {
 		s.op.m.SubmitSM.WithLabelValues(name, "rejected").Inc()
 		s.send(smpp.SubmitSMResp, smpp.ESME_RINVBNDSTS, raw.Header.Seq, nil)
@@ -314,8 +314,8 @@ func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Ti
 		if err := s.send(smpp.DeliverSM, smpp.ESME_ROK, s.nextSeq(), body); err != nil {
 			return
 		}
-		s.op.m.DLRSent.WithLabelValues(s.op.cfg.Name, outcome.Stat).Inc()
-		s.op.srv.RecordEvent(s.op.cfg.Name, "dlr", "info", fmt.Sprintf("DLR delivered: %s (%s)", outcome.Stat, msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
+		s.op.m.DLRSent.WithLabelValues(s.op.Name(), outcome.Stat).Inc()
+		s.op.srv.RecordEvent(s.op.Name(), "dlr", "info", fmt.Sprintf("DLR delivered: %s (%s)", outcome.Stat, msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
 	}()
 }
 
@@ -323,7 +323,7 @@ func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Ti
 func (s *session) sendMO(sm *smpp.SM) error {
 	err := s.send(smpp.DeliverSM, smpp.ESME_ROK, s.nextSeq(), sm.Encode())
 	if err == nil {
-		s.op.m.MOSent.WithLabelValues(s.op.cfg.Name).Inc()
+		s.op.m.MOSent.WithLabelValues(s.op.Name()).Inc()
 	}
 	return err
 }
@@ -342,7 +342,7 @@ func (s *session) send(id smpp.CommandID, status smpp.Status, seq uint32, body [
 		s.log.Debug("write failed", "err", err, "command", id.String())
 		return err
 	}
-	s.op.m.PDUTx.WithLabelValues(s.op.cfg.Name, id.String()).Inc()
+	s.op.m.PDUTx.WithLabelValues(s.op.Name(), id.String()).Inc()
 	return nil
 }
 

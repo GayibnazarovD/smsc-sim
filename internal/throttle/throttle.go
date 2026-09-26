@@ -59,6 +59,17 @@ func (b *Bucket) setClock(now func() time.Time) {
 	b.tokens = b.burst
 }
 
+// SetRate dynamically changes the rate and burst limit at runtime.
+func (b *Bucket) SetRate(rate, burst float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.rate = rate
+	b.burst = burst
+	if b.tokens > burst {
+		b.tokens = burst
+	}
+}
+
 // Tokens returns the current token count (for metrics/introspection).
 func (b *Bucket) Tokens() float64 {
 	b.mu.Lock()

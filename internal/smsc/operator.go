@@ -18,6 +18,8 @@ import (
 
 // Operator is the runtime form of one configured SMSC endpoint.
 type Operator struct {
+	name string
+	cfgMu sync.RWMutex
 	cfg config.Operator
 	log *slog.Logger
 	m   *metrics.Metrics
@@ -50,6 +52,7 @@ type concatEntry struct {
 
 func newOperator(cfg config.Operator, seedBase int64, log *slog.Logger, m *metrics.Metrics, srv *Server) *Operator {
 	op := &Operator{
+		name:     cfg.Name,
 		cfg:      cfg,
 		log:      log.With("operator", cfg.Name, "listen", cfg.Listen),
 		m:        m,
@@ -98,7 +101,7 @@ func (op *Operator) setAddr(a string) {
 }
 
 // Name returns the operator's configured name.
-func (op *Operator) Name() string { return op.cfg.Name }
+func (op *Operator) Name() string { return op.name }
 
 // Addr returns the address the operator's listener is actually bound to (useful
 // when the config used port 0).
@@ -253,6 +256,51 @@ func (op *Operator) Sessions() []SessionSnapshot {
 		out = append(out, s.describe())
 	}
 	return out
+}
+
+// UpdateConfig dynamically mutates the operator's runtime settings.
+func (op *Operator) UpdateConfig(cfg config.Operator) {
+	op.cfgMu.Lock()
+	op.cfg = cfg
+	op.cfgMu.Unlock()
+
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	if rate, burst, ok := cfg.Throttle.Rate(); ok {
+		if op.bucket == nil {
+			op.bucket = throttle.New(rate, burst)
+		} else {
+			op.bucket.SetRate(rate, burst)
+		}
+		op.limited = true
+	} else {
+		op.limited = false
+	}
+
+	op.dlr = dlr.New(cfg.DLR)
+
+	op.allowTX, op.allowRX, op.allowTRX = false, false, false
+	if len(cfg.BindTypes) == 0 {
+		op.allowTX, op.allowRX, op.allowTRX = true, true, true
+	} else {
+		for _, bt := range cfg.BindTypes {
+			switch bt {
+			case "tx":
+				op.allowTX = true
+			case "rx":
+				op.allowRX = true
+			case "trx":
+				op.allowTRX = true
+			}
+		}
+	}
+}
+
+// Config returns a copy of the operator's configuration.
+func (op *Operator) Config() config.Operator {
+	op.cfgMu.RLock()
+	defer op.cfgMu.RUnlock()
+	return op.cfg
 }
 
 // Snapshot is a read-only view of an operator for the admin API.

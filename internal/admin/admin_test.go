@@ -15,9 +15,10 @@ import (
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/config"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/metrics"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/smsc"
+	"github.com/dilshodgayibnazarov/smsc-sim/internal/store"
 )
 
-func setupTestServer(t *testing.T) (*smsc.Server, http.Handler) {
+func setupTestServer(t *testing.T) (*smsc.Server, *store.Store, http.Handler) {
 	t.Helper()
 	cfg := &config.Config{
 		Seed: 42,
@@ -37,12 +38,22 @@ func setupTestServer(t *testing.T) (*smsc.Server, http.Handler) {
 	reg := prometheus.NewRegistry()
 	m := metrics.New(reg)
 	srv := smsc.New(cfg, log, m)
-	h := Handler(srv, log)
-	return srv, h
+	if err := srv.Start(); err != nil {
+		t.Fatalf("start srv: %v", err)
+	}
+
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	_ = st.SeedIfEmpty(cfg.Operators)
+
+	h := Handler(srv, st, log)
+	return srv, st, h
 }
 
 func TestWebUIRoutes(t *testing.T) {
-	_, h := setupTestServer(t)
+	_, _, h := setupTestServer(t)
 
 	// Test GET / (index.html)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -77,7 +88,7 @@ func TestWebUIRoutes(t *testing.T) {
 }
 
 func TestAdminAPIRoutes(t *testing.T) {
-	srv, h := setupTestServer(t)
+	srv, _, h := setupTestServer(t)
 
 	// Healthz
 	reqHealth := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -148,7 +159,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 	if err := json.NewDecoder(wEv.Body).Decode(&evs); err != nil {
 		t.Fatalf("decode events: %v", err)
 	}
-	if len(evs) != 1 || evs[0].Message != "Test bind event" {
+	if len(evs) < 1 || evs[0].Message != "Test bind event" {
 		t.Fatalf("unexpected events: %+v", evs)
 	}
 
@@ -167,6 +178,72 @@ func TestAdminAPIRoutes(t *testing.T) {
 	h.ServeHTTP(wMO, reqMO)
 	if wMO.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for MO with no receiver, got %d", wMO.Code)
+	}
+}
+
+func TestOperatorCRUD(t *testing.T) {
+	_, _, h := setupTestServer(t)
+
+	// POST /admin/operators
+	body := `{
+		"name": "carrier-x",
+		"listen": "127.0.0.1:0",
+		"smpp_version": "3.4",
+		"accounts": [{"system_id": "cx_user", "password": "cx_password"}],
+		"throttle": {"tps": 200, "burst": 200}
+	}`
+	reqCreate := httptest.NewRequest(http.MethodPost, "/admin/operators", strings.NewReader(body))
+	wCreate := httptest.NewRecorder()
+	h.ServeHTTP(wCreate, reqCreate)
+
+	if wCreate.Code != http.StatusCreated {
+		t.Fatalf("create operator failed: %d body: %s", wCreate.Code, wCreate.Body.String())
+	}
+
+	// GET /admin/operators/carrier-x
+	reqGet := httptest.NewRequest(http.MethodGet, "/admin/operators/carrier-x", nil)
+	wGet := httptest.NewRecorder()
+	h.ServeHTTP(wGet, reqGet)
+	if wGet.Code != http.StatusOK {
+		t.Fatalf("get operator failed: %d", wGet.Code)
+	}
+	var op config.Operator
+	if err := json.NewDecoder(wGet.Body).Decode(&op); err != nil {
+		t.Fatalf("decode op: %v", err)
+	}
+	if op.Name != "carrier-x" || len(op.Accounts) != 1 {
+		t.Fatalf("unexpected op: %+v", op)
+	}
+
+	// PUT /admin/operators/carrier-x
+	updateBody := `{
+		"name": "carrier-x",
+		"listen": "127.0.0.1:0",
+		"smpp_version": "3.4",
+		"accounts": [{"system_id": "cx_user", "password": "new_password"}],
+		"throttle": {"tps": 500, "burst": 500}
+	}`
+	reqPut := httptest.NewRequest(http.MethodPut, "/admin/operators/carrier-x", strings.NewReader(updateBody))
+	wPut := httptest.NewRecorder()
+	h.ServeHTTP(wPut, reqPut)
+	if wPut.Code != http.StatusOK {
+		t.Fatalf("update operator failed: %d body: %s", wPut.Code, wPut.Body.String())
+	}
+
+	// DELETE /admin/operators/carrier-x
+	reqDel := httptest.NewRequest(http.MethodDelete, "/admin/operators/carrier-x", nil)
+	wDel := httptest.NewRecorder()
+	h.ServeHTTP(wDel, reqDel)
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete operator failed: %d", wDel.Code)
+	}
+
+	// GET after delete should 404
+	reqGet404 := httptest.NewRequest(http.MethodGet, "/admin/operators/carrier-x", nil)
+	wGet404 := httptest.NewRecorder()
+	h.ServeHTTP(wGet404, reqGet404)
+	if wGet404.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", wGet404.Code)
 	}
 }
 

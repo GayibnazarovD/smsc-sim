@@ -32,3 +32,5 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 
 // MarshalYAML implements yaml.Marshaler so round-tripped config stays legible.
 func (d Duration) MarshalYAML() (any, error) { return time.Duration(d).String(), nil }
+
+func (d Duration) String() string { return time.Duration(d).String() }

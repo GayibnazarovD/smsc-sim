@@ -26,7 +26,7 @@ type Server struct {
 	log       *slog.Logger
 	m         *metrics.Metrics
 	operators []*Operator
-	listeners []net.Listener
+	listeners map[string]net.Listener
 
 	mu        sync.Mutex
 	sessions  map[*session]struct{}
@@ -50,6 +50,7 @@ func New(cfg *config.Config, log *slog.Logger, m *metrics.Metrics) *Server {
 		startTime: time.Now(),
 		log:       log,
 		m:         m,
+		listeners: map[string]net.Listener{},
 		sessions:  map[*session]struct{}{},
 		maxEvents: 250,
 	}
@@ -62,7 +63,25 @@ func New(cfg *config.Config, log *slog.Logger, m *metrics.Metrics) *Server {
 }
 
 // Operators exposes the operator list for the admin API.
-func (s *Server) Operators() []*Operator { return s.operators }
+func (s *Server) Operators() []*Operator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Operator, len(s.operators))
+	copy(out, s.operators)
+	return out
+}
+
+// OperatorByName returns the named operator or nil if not found.
+func (s *Server) OperatorByName(name string) *Operator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, o := range s.operators {
+		if o.cfg.Name == name {
+			return o
+		}
+	}
+	return nil
+}
 
 // Config returns the active simulator configuration.
 func (s *Server) Config() *config.Config { return s.cfg }
@@ -151,18 +170,146 @@ func (s *Server) Start() error {
 	s.mu.Unlock()
 
 	for _, op := range s.operators {
-		ln, err := s.listen(op)
-		if err != nil {
+		if err := s.startOperatorListener(op); err != nil {
 			_ = s.stopListeners()
-			return fmt.Errorf("operator %q: listen %s: %w", op.cfg.Name, op.cfg.Listen, err)
+			return err
 		}
-		s.listeners = append(s.listeners, ln)
-		op.setAddr(ln.Addr().String())
-		s.wg.Add(1)
-		go s.acceptLoop(op, ln)
-		op.log.Info("listening", "addr", ln.Addr().String())
-		s.RecordEvent(op.cfg.Name, "listen", "info", fmt.Sprintf("Listening on %s", ln.Addr().String()), op.cfg.SMPPVersion)
 	}
+	return nil
+}
+
+func (s *Server) startOperatorListener(op *Operator) error {
+	ln, err := s.listen(op)
+	if err != nil {
+		return fmt.Errorf("operator %q: listen %s: %w", op.cfg.Name, op.cfg.Listen, err)
+	}
+	s.mu.Lock()
+	s.listeners[op.cfg.Name] = ln
+	s.mu.Unlock()
+
+	op.setAddr(ln.Addr().String())
+	s.wg.Add(1)
+	go s.acceptLoop(op, ln)
+	op.log.Info("listening", "addr", ln.Addr().String())
+	s.RecordEvent(op.cfg.Name, "listen", "info", fmt.Sprintf("Listening on %s", ln.Addr().String()), op.cfg.SMPPVersion)
+	return nil
+}
+
+// AddOperator dynamically registers and starts a new operator endpoint.
+func (s *Server) AddOperator(oc config.Operator) error {
+	s.mu.Lock()
+	for _, o := range s.operators {
+		if o.cfg.Name == oc.Name {
+			s.mu.Unlock()
+			return fmt.Errorf("operator %q already exists", oc.Name)
+		}
+	}
+	op := newOperator(oc, time.Now().UnixNano(), s.log, s.m, s)
+	s.operators = append(s.operators, op)
+	accepting := s.accepting
+	s.mu.Unlock()
+
+	if accepting {
+		if err := s.startOperatorListener(op); err != nil {
+			// Rollback if listener failed to open
+			s.mu.Lock()
+			for i, o := range s.operators {
+				if o == op {
+					s.operators = append(s.operators[:i], s.operators[i+1:]...)
+					break
+				}
+			}
+			s.mu.Unlock()
+			return err
+		}
+	}
+	return nil
+}
+
+// UpdateOperator updates an existing operator's configuration and live listener.
+func (s *Server) UpdateOperator(oldName string, oc config.Operator) error {
+	s.mu.Lock()
+	var target *Operator
+	for _, o := range s.operators {
+		if o.cfg.Name == oldName {
+			target = o
+			break
+		}
+	}
+	if target == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("operator %q not found", oldName)
+	}
+
+	listenChanged := target.cfg.Listen != oc.Listen
+	nameChanged := oldName != oc.Name
+	oldLn := s.listeners[oldName]
+	s.mu.Unlock()
+
+	if listenChanged && s.accepting {
+		if oldLn != nil {
+			_ = oldLn.Close()
+			s.mu.Lock()
+			delete(s.listeners, oldName)
+			s.mu.Unlock()
+		}
+		target.UpdateConfig(oc)
+		if err := s.startOperatorListener(target); err != nil {
+			return fmt.Errorf("rebind %s: %w", oc.Listen, err)
+		}
+	} else {
+		target.UpdateConfig(oc)
+		if nameChanged {
+			s.mu.Lock()
+			if oldLn != nil {
+				delete(s.listeners, oldName)
+				s.listeners[oc.Name] = oldLn
+			}
+			s.mu.Unlock()
+		}
+	}
+
+	s.RecordEvent(oc.Name, "config", "info", fmt.Sprintf("Operator %q configuration updated", oc.Name), oc.Listen)
+	return nil
+}
+
+// DeleteOperator stops an operator's listener, disconnects sessions, and removes it.
+func (s *Server) DeleteOperator(name string) error {
+	s.mu.Lock()
+	var target *Operator
+	targetIdx := -1
+	for i, o := range s.operators {
+		if o.cfg.Name == name {
+			target = o
+			targetIdx = i
+			break
+		}
+	}
+	if target == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("operator %q not found", name)
+	}
+
+	s.operators = append(s.operators[:targetIdx], s.operators[targetIdx+1:]...)
+	ln, hasLn := s.listeners[name]
+	if hasLn {
+		delete(s.listeners, name)
+	}
+
+	// Close all sessions belonging to target
+	for sess := range s.sessions {
+		if sess.op == target {
+			sess.close()
+			delete(s.sessions, sess)
+		}
+	}
+	s.mu.Unlock()
+
+	if hasLn && ln != nil {
+		_ = ln.Close()
+	}
+
+	s.RecordEvent(name, "delete", "warn", fmt.Sprintf("Operator %q deleted", name), "")
 	return nil
 }
 
@@ -229,7 +376,7 @@ func (s *Server) acceptLoop(op *Operator, ln net.Listener) {
 // eligible session.
 func (s *Server) InjectMO(operator, source, dest, text string, dataCoding uint8) error {
 	var op *Operator
-	for _, o := range s.operators {
+	for _, o := range s.Operators() {
 		if o.cfg.Name == operator {
 			op = o
 			break
@@ -282,12 +429,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) stopListeners() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var err error
-	for _, ln := range s.listeners {
+	for name, ln := range s.listeners {
 		if cerr := ln.Close(); cerr != nil && err == nil {
 			err = cerr
 		}
+		delete(s.listeners, name)
 	}
-	s.listeners = nil
 	return err
 }

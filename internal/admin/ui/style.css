@@ -1091,3 +1091,68 @@ body {
   clip: rect(0, 0, 0, 0);
   border: 0;
 }
+
+/* Modals & Forms Extra */
+.modal-lg {
+  max-width: 580px;
+}
+
+.modal-scroll {
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.form-section {
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-top: 14px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.toggle-wrap input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.account-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.account-row .form-input {
+  flex: 1;
+}
+
+.op-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

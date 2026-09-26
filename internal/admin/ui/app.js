@@ -15,6 +15,7 @@
     config: null,
     moHistory: JSON.parse(localStorage.getItem('smsc_sim_mo_history') || '[]'),
     targetDisconnectId: null,
+    targetDeleteOpName: null,
     operatorFilter: '',
     eventOpFilter: 'all',
     eventTypeFilter: 'all',
@@ -50,6 +51,7 @@
     operatorsGrid: document.getElementById('operators-grid'),
     visibleOpsCount: document.getElementById('visible-operators-count'),
     totalOpsCount: document.getElementById('total-operators-count'),
+    btnAddOperator: document.getElementById('btn-add-operator'),
     
     // Sessions
     sessionsTbody: document.getElementById('sessions-tbody'),
@@ -82,12 +84,43 @@
     configJsonBlock: document.getElementById('config-json-block'),
     btnCopyConfig: document.getElementById('btn-copy-config'),
     
-    // Modal
+    // Disconnect Modal
     disconnectModal: document.getElementById('disconnect-modal'),
     modalSessionId: document.getElementById('modal-session-id'),
     modalCloseBtn: document.getElementById('modal-close-btn'),
     modalCancelBtn: document.getElementById('modal-cancel-btn'),
     modalConfirmBtn: document.getElementById('modal-confirm-btn'),
+
+    // Add/Edit Operator Modal
+    operatorModal: document.getElementById('operator-modal'),
+    operatorModalTitle: document.getElementById('operator-modal-title'),
+    opModalCloseBtn: document.getElementById('op-modal-close-btn'),
+    opModalCancelBtn: document.getElementById('op-modal-cancel-btn'),
+    opModalSaveBtn: document.getElementById('op-modal-save-btn'),
+    operatorForm: document.getElementById('operator-form'),
+    opFormIsEdit: document.getElementById('op-form-is-edit'),
+    opFormOldName: document.getElementById('op-form-old-name'),
+    opNameInput: document.getElementById('op-name-input'),
+    opListenInput: document.getElementById('op-listen-input'),
+    opVersionSelect: document.getElementById('op-version-select'),
+    opWindowInput: document.getElementById('op-window-input'),
+    btnAddAccount: document.getElementById('btn-add-account'),
+    opAccountsContainer: document.getElementById('op-accounts-container'),
+    opRateLimitedCheckbox: document.getElementById('op-rate-limited-checkbox'),
+    opThrottleFields: document.getElementById('op-throttle-fields'),
+    opTpsInput: document.getElementById('op-tps-input'),
+    opBurstInput: document.getElementById('op-burst-input'),
+    opDlrEnabledCheckbox: document.getElementById('op-dlr-enabled-checkbox'),
+    opDlrFields: document.getElementById('op-dlr-fields'),
+    opDlrMinInput: document.getElementById('op-dlr-min-input'),
+    opDlrMaxInput: document.getElementById('op-dlr-max-input'),
+
+    // Delete Operator Modal
+    deleteOpModal: document.getElementById('delete-operator-modal'),
+    delOpModalName: document.getElementById('del-op-modal-name'),
+    delOpModalCloseBtn: document.getElementById('del-op-modal-close-btn'),
+    delOpCancelBtn: document.getElementById('del-op-cancel-btn'),
+    delOpConfirmBtn: document.getElementById('del-op-confirm-btn'),
     
     // Toast
     toastContainer: document.getElementById('toast-container'),
@@ -245,13 +278,39 @@
       });
     });
 
-    // Modal
+    // Disconnect Modal
     el.modalCloseBtn.addEventListener('click', closeModal);
     el.modalCancelBtn.addEventListener('click', closeModal);
     el.disconnectModal.addEventListener('click', (e) => {
       if (e.target === el.disconnectModal) closeModal();
     });
     el.modalConfirmBtn.addEventListener('click', confirmDisconnect);
+
+    // Operator Add/Edit Modal
+    if (el.btnAddOperator) {
+      el.btnAddOperator.addEventListener('click', openAddOperatorModal);
+    }
+    el.opModalCloseBtn.addEventListener('click', closeOperatorModal);
+    el.opModalCancelBtn.addEventListener('click', closeOperatorModal);
+    el.operatorModal.addEventListener('click', (e) => {
+      if (e.target === el.operatorModal) closeOperatorModal();
+    });
+    el.btnAddAccount.addEventListener('click', () => addAccountRow());
+    el.opRateLimitedCheckbox.addEventListener('change', (e) => {
+      el.opThrottleFields.style.display = e.target.checked ? 'flex' : 'none';
+    });
+    el.opDlrEnabledCheckbox.addEventListener('change', (e) => {
+      el.opDlrFields.style.display = e.target.checked ? 'flex' : 'none';
+    });
+    el.operatorForm.addEventListener('submit', handleOperatorSubmit);
+
+    // Delete Operator Modal
+    el.delOpModalCloseBtn.addEventListener('click', closeDeleteOpModal);
+    el.delOpCancelBtn.addEventListener('click', closeDeleteOpModal);
+    el.deleteOpModal.addEventListener('click', (e) => {
+      if (e.target === el.deleteOpModal) closeDeleteOpModal();
+    });
+    el.delOpConfirmBtn.addEventListener('click', confirmDeleteOperator);
   }
 
   function updatePauseUI() {
@@ -402,7 +461,6 @@
       const card = document.createElement('div');
       card.className = 'operator-card';
       
-      const isOnline = true; // listeners are active
       const hasBinds = op.active_binds > 0;
       const bindClass = hasBinds ? 'badge-active' : 'badge-inactive';
       
@@ -461,22 +519,228 @@
           <div class="op-msgs-count">
             Messages: <strong>${(op.messages_seen || 0).toLocaleString()}</strong>
           </div>
-          <button class="btn btn-secondary btn-xs btn-inject-mo" data-operator="${escapeHTML(op.name)}">
-            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-              <polyline points="22,6 12,13 2,6"></polyline>
-            </svg>
-            Inject MO
-          </button>
+          <div class="op-card-actions">
+            <button class="btn btn-secondary btn-xs btn-inject-mo" data-operator="${escapeHTML(op.name)}">
+              MO
+            </button>
+            <button class="btn btn-secondary btn-xs btn-edit-op" data-operator="${escapeHTML(op.name)}">
+              Edit
+            </button>
+            <button class="btn btn-danger btn-xs btn-delete-op" data-operator="${escapeHTML(op.name)}">
+              Delete
+            </button>
+          </div>
         </div>
       `;
 
       card.querySelector('.btn-inject-mo').addEventListener('click', () => {
         openMOForOperator(op.name);
       });
+      card.querySelector('.btn-edit-op').addEventListener('click', () => {
+        openEditOperatorModal(op.name);
+      });
+      card.querySelector('.btn-delete-op').addEventListener('click', () => {
+        openDeleteOpModal(op.name);
+      });
 
       el.operatorsGrid.appendChild(card);
     });
+  }
+
+  // Operator CRUD UI Handlers
+  function openAddOperatorModal() {
+    el.opFormIsEdit.value = 'false';
+    el.opFormOldName.value = '';
+    el.operatorModalTitle.textContent = 'Add New Connection';
+    el.operatorForm.reset();
+
+    el.opAccountsContainer.innerHTML = '';
+    addAccountRow('', '');
+
+    el.opRateLimitedCheckbox.checked = true;
+    el.opThrottleFields.style.display = 'flex';
+    el.opDlrEnabledCheckbox.checked = true;
+    el.opDlrFields.style.display = 'flex';
+
+    el.operatorModal.classList.remove('hidden');
+    el.opNameInput.focus();
+  }
+
+  async function openEditOperatorModal(opName) {
+    el.opFormIsEdit.value = 'true';
+    el.opFormOldName.value = opName;
+    el.operatorModalTitle.textContent = `Edit Connection: ${opName}`;
+
+    try {
+      const res = await fetch(`/admin/operators/${encodeURIComponent(opName)}`);
+      if (!res.ok) throw new Error('Failed to fetch operator config');
+      const op = await res.json();
+
+      el.opNameInput.value = op.name || opName;
+      el.opListenInput.value = op.listen || '';
+      el.opVersionSelect.value = op.smpp_version || '3.4';
+      el.opWindowInput.value = op.window_size || 10;
+
+      el.opAccountsContainer.innerHTML = '';
+      if (op.accounts && op.accounts.length > 0) {
+        op.accounts.forEach((a) => addAccountRow(a.system_id, a.password));
+      } else {
+        addAccountRow('', '');
+      }
+
+      const hasThrottle = op.throttle && (op.throttle.tps > 0 || op.throttle.count > 0);
+      el.opRateLimitedCheckbox.checked = hasThrottle;
+      el.opThrottleFields.style.display = hasThrottle ? 'flex' : 'none';
+      if (hasThrottle) {
+        el.opTpsInput.value = op.throttle.tps || 100;
+        el.opBurstInput.value = op.throttle.burst || 100;
+      }
+
+      const dlrOn = op.dlr && (op.dlr.enabled === undefined || op.dlr.enabled === true);
+      el.opDlrEnabledCheckbox.checked = dlrOn;
+      el.opDlrFields.style.display = dlrOn ? 'flex' : 'none';
+      if (op.dlr && op.dlr.delay) {
+        el.opDlrMinInput.value = op.dlr.delay.min || '2s';
+        el.opDlrMaxInput.value = op.dlr.delay.max || '15s';
+      }
+
+      el.operatorModal.classList.remove('hidden');
+    } catch (err) {
+      showToast('Error loading operator: ' + err.message, 'error');
+    }
+  }
+
+  function closeOperatorModal() {
+    el.operatorModal.classList.add('hidden');
+  }
+
+  function addAccountRow(systemId = '', password = '') {
+    const row = document.createElement('div');
+    row.className = 'account-row';
+    row.innerHTML = `
+      <input type="text" class="form-input acc-sysid" placeholder="system_id" value="${escapeHTML(systemId)}" required>
+      <input type="text" class="form-input acc-pass" placeholder="password" value="${escapeHTML(password)}" required>
+      <button type="button" class="btn btn-ghost btn-xs btn-remove-acc" title="Remove account">&times;</button>
+    `;
+    row.querySelector('.btn-remove-acc').addEventListener('click', () => {
+      if (el.opAccountsContainer.children.length > 1) {
+        row.remove();
+      } else {
+        showToast('At least one account is required', 'warn');
+      }
+    });
+    el.opAccountsContainer.appendChild(row);
+  }
+
+  async function handleOperatorSubmit(e) {
+    e.preventDefault();
+    const isEdit = el.opFormIsEdit.value === 'true';
+    const oldName = el.opFormOldName.value;
+
+    const name = el.opNameInput.value.trim();
+    const listen = el.opListenInput.value.trim();
+    const smppVersion = el.opVersionSelect.value;
+    const windowSize = parseInt(el.opWindowInput.value, 10) || 10;
+
+    const accounts = [];
+    const rows = el.opAccountsContainer.querySelectorAll('.account-row');
+    rows.forEach((r) => {
+      const sysId = r.querySelector('.acc-sysid').value.trim();
+      const pass = r.querySelector('.acc-pass').value.trim();
+      if (sysId) {
+        accounts.push({ system_id: sysId, password: pass });
+      }
+    });
+
+    if (accounts.length === 0) {
+      showToast('At least one account (system_id & password) is required', 'error');
+      return;
+    }
+
+    const payload = {
+      name: name,
+      listen: listen,
+      smpp_version: smppVersion,
+      window_size: windowSize,
+      accounts: accounts,
+      bind_types: ['tx', 'rx', 'trx'],
+      throttle: {},
+      dlr: {
+        enabled: el.opDlrEnabledCheckbox.checked,
+        delay: {
+          min: el.opDlrMinInput.value.trim() || '2s',
+          max: el.opDlrMaxInput.value.trim() || '15s',
+        },
+      },
+    };
+
+    if (el.opRateLimitedCheckbox.checked) {
+      payload.throttle.tps = parseFloat(el.opTpsInput.value) || 100;
+      payload.throttle.burst = parseFloat(el.opBurstInput.value) || 100;
+    }
+
+    el.opModalSaveBtn.disabled = true;
+
+    try {
+      const url = isEdit ? `/admin/operators/${encodeURIComponent(oldName)}` : '/admin/operators';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+
+      showToast(`Connection ${name} ${isEdit ? 'updated' : 'created'} successfully!`, 'success');
+      closeOperatorModal();
+      await fetchOverview();
+      await fetchEvents();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      el.opModalSaveBtn.disabled = false;
+    }
+  }
+
+  function openDeleteOpModal(opName) {
+    state.targetDeleteOpName = opName;
+    el.delOpModalName.textContent = opName;
+    el.deleteOpModal.classList.remove('hidden');
+  }
+
+  function closeDeleteOpModal() {
+    state.targetDeleteOpName = null;
+    el.deleteOpModal.classList.add('hidden');
+  }
+
+  async function confirmDeleteOperator() {
+    const name = state.targetDeleteOpName;
+    if (!name) return;
+
+    el.delOpConfirmBtn.disabled = true;
+    try {
+      const res = await fetch(`/admin/operators/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+
+      showToast(`Operator ${name} deleted`, 'warn');
+      closeDeleteOpModal();
+      await fetchOverview();
+      await fetchEvents();
+    } catch (err) {
+      showToast('Delete failed: ' + err.message, 'error');
+    } finally {
+      el.delOpConfirmBtn.disabled = false;
+    }
   }
 
   function renderSessions() {
@@ -594,7 +858,6 @@
     if (currentVal && state.overview.operators.some((o) => o.name === currentVal)) {
       el.moOpSelect.value = currentVal;
     } else if (state.overview.operators.length > 0 && !el.moOpSelect.value) {
-      // Pick first operator with bound receivers, or first operator
       const boundOp = state.overview.operators.find((o) => (receiverCounts[o.name] || 0) > 0);
       el.moOpSelect.value = boundOp ? boundOp.name : state.overview.operators[0].name;
     }
@@ -704,7 +967,6 @@
 
       showToast(`MO sent to ${dest} via ${op}`, 'success');
       
-      // Add to history
       const item = {
         time: new Date().toISOString(),
         operator: op,
@@ -718,7 +980,6 @@
       localStorage.setItem('smsc_sim_mo_history', JSON.stringify(state.moHistory));
       renderMOHistory();
 
-      // Refresh events
       fetchEvents();
     } catch (err) {
       showToast(`MO failed: ${err.message}`, 'error');

@@ -154,6 +154,22 @@ func (s *session) dispatch(raw *smpp.RawPDU) (stop bool) {
 		return s.handleBind(raw)
 	case smpp.SubmitSM:
 		s.handleSubmit(raw)
+	case smpp.DataSM:
+		s.handleDataSM(raw)
+	case smpp.SubmitMulti:
+		s.handleSubmitMulti(raw)
+	case smpp.QuerySM:
+		s.handleQuerySM(raw)
+	case smpp.CancelSM:
+		s.handleCancelSM(raw)
+	case smpp.ReplaceSM:
+		s.handleReplaceSM(raw)
+	case smpp.BroadcastSM:
+		s.handleBroadcastSM(raw)
+	case smpp.QueryBroadcastSM:
+		s.handleQueryBroadcastSM(raw)
+	case smpp.CancelBroadcastSM:
+		s.handleCancelBroadcastSM(raw)
 	case smpp.DeliverSMResp:
 		// ESME acknowledged a receipt/MO we sent; nothing to do.
 	case smpp.EnquireLink:
@@ -352,6 +368,18 @@ func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Ti
 		outcome = *outcomeOverride
 	}
 
+	// SMPP Registered Delivery semantics:
+	// 0x01: receipt requested on both success and failure (SMPP v3.4 / v5.0)
+	// 0x02: receipt requested on delivery failure only (SMPP v3.4 / v5.0)
+	// 0x03: receipt requested on successful delivery only (SMPP v5.0 new feature)
+	reg := sm.RegisteredDelivery & 0x03
+	if reg == 0x02 && outcome.Delivered() {
+		return // Failure only, but outcome was delivered -> no DLR
+	}
+	if reg == 0x03 && !outcome.Delivered() {
+		return // Success only (SMPP v5.0), but outcome was not delivered -> no DLR
+	}
+
 	delay := s.op.dlr.Delay(s.rng)
 	if delayOverride != nil {
 		delay = *delayOverride
@@ -408,6 +436,7 @@ func checkSubmitSimulation(text string) (handled bool, shouldDrop bool, nack boo
 		"[ERR_SUBMITFAIL]":    smpp.ESME_RSUBMITFAIL,
 		"[ERR_PROHIBITED]":    smpp.ESME_RPROHIBITED,
 		"[ERR_SERTYPUNAVAIL]": smpp.ESME_RSERTYPUNAVAIL,
+		"[ERR_SERTYPDENIED]":  smpp.ESME_RSERTYPDENIED,
 		"[ERR_SERTYPUNAUTH]":  smpp.ESME_RSERTYPUNAUTH,
 		"[ERR_INVMSGLEN]":     smpp.ESME_RINVMSGLEN,
 		"[ERR_INVESMCLASS]":   smpp.ESME_RINVESMCLASS,
@@ -576,4 +605,105 @@ func bindTypeLabel(id smpp.CommandID) string {
 func isClosedConn(err error) bool {
 	return err != nil && (errors.Is(err, net.ErrClosed) ||
 		strings.Contains(err.Error(), "use of closed network connection"))
+}
+
+func (s *session) handleDataSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	if !s.canSubmit() {
+		s.send(smpp.DataSMResp, smpp.ESME_RINVBNDSTS, raw.Header.Seq, nil)
+		return
+	}
+	sm, err := smpp.DecodeSM(raw.Body)
+	if err != nil {
+		s.send(smpp.DataSMResp, smpp.ESME_RINVMSGLEN, raw.Header.Seq, nil)
+		return
+	}
+
+	msgText := string(sm.Text())
+	if handled, drop, nack, simStatus := checkSubmitSimulation(msgText); handled {
+		if drop {
+			return
+		}
+		if nack {
+			s.send(smpp.GenericNACK, smpp.ESME_RSYSERR, raw.Header.Seq, nil)
+			return
+		}
+		if simStatus == smpp.ESME_RCONGESTION {
+			s.send(smpp.DataSMResp, simStatus, raw.Header.Seq, smpp.EncodeSubmitSMRespWithTLVs("", smpp.TLV{Tag: smpp.TagCongestionState, Value: []byte{95}}))
+		} else {
+			s.send(smpp.DataSMResp, simStatus, raw.Header.Seq, nil)
+		}
+		return
+	}
+
+	if s.op.limited && !s.op.bucket.Allow() {
+		s.send(smpp.DataSMResp, smpp.ESME_RTHROTTLED, raw.Header.Seq, nil)
+		return
+	}
+
+	msgID := s.op.messageIDFor(sm)
+	acceptedAt := time.Now()
+	s.send(smpp.DataSMResp, smpp.ESME_ROK, raw.Header.Seq, smpp.EncodeSubmitSMResp(msgID))
+	s.op.srv.RecordEvent(name, "data_sm", "info", fmt.Sprintf("data_sm accepted (id=%s)", msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
+
+	if sm.WantsReceipt() && s.op.dlr.Enabled() {
+		s.scheduleReceipt(sm, msgID, acceptedAt)
+	}
+}
+
+func (s *session) handleQuerySM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	msgID, _ := smpp.DecodeQuerySM(raw.Body)
+	if msgID == "" {
+		msgID = "00000001"
+	}
+	finalDate := time.Now().Format("0601021504")
+	body := smpp.EncodeQuerySMResp(msgID, finalDate, smpp.StateDelivered, 0)
+	s.send(smpp.QuerySMResp, smpp.ESME_ROK, raw.Header.Seq, body)
+	s.op.srv.RecordEvent(name, "query_sm", "info", fmt.Sprintf("query_sm status DELIVRD for message %s", msgID), s.remoteAddr)
+}
+
+func (s *session) handleCancelSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	s.send(smpp.CancelSMResp, smpp.ESME_ROK, raw.Header.Seq, nil)
+	s.op.srv.RecordEvent(name, "cancel_sm", "info", "cancel_sm accepted", s.remoteAddr)
+}
+
+func (s *session) handleReplaceSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	s.send(smpp.ReplaceSMResp, smpp.ESME_ROK, raw.Header.Seq, nil)
+	s.op.srv.RecordEvent(name, "replace_sm", "info", "replace_sm accepted", s.remoteAddr)
+}
+
+func (s *session) handleSubmitMulti(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	if !s.canSubmit() {
+		s.send(smpp.SubmitMultiResp, smpp.ESME_RINVBNDSTS, raw.Header.Seq, nil)
+		return
+	}
+	msgID := s.op.nextMessageID()
+	body := smpp.EncodeSubmitMultiResp(msgID)
+	s.send(smpp.SubmitMultiResp, smpp.ESME_ROK, raw.Header.Seq, body)
+	s.op.srv.RecordEvent(name, "submit_multi", "info", fmt.Sprintf("submit_multi accepted (id=%s)", msgID), s.remoteAddr)
+}
+
+func (s *session) handleBroadcastSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	msgID := s.op.nextMessageID()
+	body := smpp.EncodeSubmitSMResp(msgID)
+	s.send(smpp.BroadcastSMResp, smpp.ESME_ROK, raw.Header.Seq, body)
+	s.op.srv.RecordEvent(name, "broadcast_sm", "info", fmt.Sprintf("broadcast_sm (Cell Broadcast) accepted (id=%s)", msgID), s.remoteAddr)
+}
+
+func (s *session) handleQueryBroadcastSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	body := smpp.EncodeSubmitSMResp("00000001")
+	s.send(smpp.QueryBroadcastSMResp, smpp.ESME_ROK, raw.Header.Seq, body)
+	s.op.srv.RecordEvent(name, "query_broadcast_sm", "info", "query_broadcast_sm answered", s.remoteAddr)
+}
+
+func (s *session) handleCancelBroadcastSM(raw *smpp.RawPDU) {
+	name := s.op.Name()
+	s.send(smpp.CancelBroadcastSMResp, smpp.ESME_ROK, raw.Header.Seq, nil)
+	s.op.srv.RecordEvent(name, "cancel_broadcast_sm", "info", "cancel_broadcast_sm accepted", s.remoteAddr)
 }

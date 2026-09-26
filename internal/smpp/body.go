@@ -214,3 +214,31 @@ func DecodeMessageID(body []byte) string {
 	r := &reader{b: body}
 	return r.cstr()
 }
+
+// EncodeQuerySMResp builds a query_sm_resp body:
+// message_id (C-Octet String), final_date (C-Octet String), message_state (1 byte), error_code (1 byte).
+func EncodeQuerySMResp(messageID string, finalDate string, state uint8, errCode uint8) []byte {
+	w := &writer{}
+	w.cstr(messageID)
+	w.cstr(finalDate)
+	w.u8(state)
+	w.u8(errCode)
+	return w.bytesVal()
+}
+
+// EncodeSubmitMultiResp builds a submit_multi_resp body:
+// message_id (C-Octet String), no_unsuccess (1 byte).
+func EncodeSubmitMultiResp(messageID string) []byte {
+	w := &writer{}
+	w.cstr(messageID)
+	w.u8(0) // 0 = all destination addresses accepted
+	return w.bytesVal()
+}
+
+// DecodeQuerySM parses a query_sm request body:
+// message_id (C-Octet String), source_addr_ton (1 byte), source_addr_npi (1 byte), source_addr (C-Octet String).
+func DecodeQuerySM(body []byte) (string, error) {
+	r := &reader{b: body}
+	msgID := r.cstr()
+	return msgID, r.err
+}

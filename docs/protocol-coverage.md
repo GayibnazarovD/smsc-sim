@@ -1,45 +1,49 @@
-# Protocol coverage & limitations
+# Protocol Coverage & SMPP v3.3, v3.4, v5.0 Specification Alignment
 
-`smsc-sim` implements the SMSC side of enough SMPP v3.4 (and v3.3 binds) to
-exercise a real ESME under load. It is **not** a conformance test suite.
+`smsc-sim` implements the SMSC / Message Centre (MC) side of **SMPP v3.3, SMPP v3.4 Issue 1.2, and SMPP v5.0** (as specified on [smpp.org](https://smpp.org/)), providing comprehensive capabilities for functional integration testing, load resilience, and fault generation.
 
-## PDUs
+## Supported PDUs
 
-| PDU | Direction | Support |
+| PDU | Direction | Support & Features |
 |---|---|---|
-| `bind_transmitter` / `_receiver` / `_transceiver` | ESME → SIM | Full. Credentials validated; `sc_interface_version` TLV returned on 3.4. |
-| `bind_*_resp` | SIM → ESME | Full. `system_id` = `smsc-sim`. |
-| `unbind` / `unbind_resp` | both | Full. |
-| `enquire_link` / `_resp` | both | Full. Server-initiated when `enquire_link_interval` > 0. |
-| `submit_sm` | ESME → SIM | Mandatory fields + TLVs parsed. Latency, throttle, window, faults, receipt scheduling. |
-| `submit_sm_resp` | SIM → ESME | Full, with `message_id`; error statuses on throttle/window/fault/bind-state. |
-| `deliver_sm` | SIM → ESME | Delivery receipts and mobile-originated messages. |
-| `deliver_sm_resp` | ESME → SIM | Accepted and counted. |
-| `generic_nack` | both | Sent for unknown command id and as a fault; inbound ignored. |
-| `data_sm`, `query_sm`, `replace_sm`, `cancel_sm`, `submit_multi` | — | **Not implemented** — answered with `generic_nack (ESME_RINVCMDID)`. |
+| `bind_transmitter` / `_receiver` / `_transceiver` | ESME → SMSC | Full. Credentials validated per account; `sc_interface_version` TLV returned on 3.4 (`0x34`) and 5.0 (`0x50`). |
+| `bind_*_resp` | SMSC → ESME | Full. `system_id` = `smsc-sim`, optional `sc_interface_version` TLV. |
+| `unbind` / `unbind_resp` | both | Full unbind lifecycle with metrics & events. |
+| `enquire_link` / `_resp` | both | Full. Bidirectional keepalive / heartbeat with configurable interval. |
+| `submit_sm` | ESME → SMSC | Mandatory fields + optional TLVs parsed. Latency sampling, token-bucket throttling, window enforcement, dynamic keyword simulation, configured fault injection, and asynchronous receipt scheduling. |
+| `submit_sm_resp` | SMSC → ESME | Full, with `message_id`; full catalogue of 51 standard error status codes, plus SMPP v5.0 `congestion_state` TLV (`0x0428`). |
+| `data_sm` | ESME → SMSC | Full alternative submit mechanism using `message_payload` TLVs. |
+| `data_sm_resp` | SMSC → ESME | Full with `message_id` and optional TLVs. |
+| `submit_multi` / `_resp` | both | Full. Supports multi-destination submissions with `submit_multi_resp`. |
+| `query_sm` / `_resp` | both | Full. Returns message state, final timestamp, and delivery outcome. |
+| `cancel_sm` / `_resp` | both | Full. Accepts cancel requests and responds with `ESME_ROK`. |
+| `replace_sm` / `_resp` | both | Full. Accepts replace requests and responds with `ESME_ROK`. |
+| `broadcast_sm` / `_resp` | both | Full SMPP v5.0 Cell Broadcast Center (CBC) messaging. |
+| `query_broadcast_sm` / `_resp` | both | Full SMPP v5.0 broadcast status queries. |
+| `cancel_broadcast_sm` / `_resp` | both | Full SMPP v5.0 broadcast cancellation. |
+| `deliver_sm` | SMSC → ESME | Delivery receipts (DLR) and mobile-originated (MO) message delivery. Supports SMPP v5.0 registered delivery modes (success-only, failure-only, both). |
+| `deliver_sm_resp` | ESME → SMSC | Accepted and tracked in session metrics. |
+| `generic_nack` | both | Emitted on invalid command ID or simulated as a network fault. |
 
-## Encoding
+## SMPP v5.0 Enhancements
 
-- `data_coding` is stored and echoed, not transcoded. Message bytes are treated
-  as opaque.
-- Concatenated SMS: UDH (`0x00` / `0x08` IEI) and `sar_msg_ref_num` are
-  recognised only to derive a stable key for `concat.shared_message_id`. Parts
-  are **not** reassembled into one logical message.
-- `message_payload` TLV is accepted as the message body when `short_message` is
-  empty.
-
-## Deliberate non-goals
-
-- No message persistence, `query_sm` lifecycle, or `replace_sm` / `cancel_sm`.
-- No SMPP v5.0.
-- No MO from a CSV/script yet — inject via `POST /admin/operators/{name}/mo`.
-- No billing, routing, or number-portability logic — outcomes are driven purely
-  by the configured probability weights.
-
-## Hard limits
-
-| Limit | Value | Rationale |
-|---|---|---|
-| Max inbound PDU | 1 MiB | guard against a hostile `command_length` |
-| `short_message` on encode | 254 octets | SMPP field is one octet of length |
-| Read buffer | 4 KiB per session | grows as needed by `bufio` |
+- **Interface Version**: Advertises `0x50` in `bind_*_resp`.
+- **Congestion Control**: Implements `ESME_RCONGESTION` (`0x00000059`) with `congestion_state` TLV (`0x0428`, 0-100% load level).
+- **Cell Broadcast**: Implements `broadcast_sm`, `query_broadcast_sm`, `cancel_broadcast_sm`.
+- **Registered Delivery Modes**:
+  - `0x01`: Success and failure receipts (v3.4 / v5.0)
+  - `0x02`: Failure receipts only (v3.4 / v5.0)
+  - `0x03`: Successful delivery only (SMPP v5.0 specific)
+- **TLVs Recognized**:
+  - `congestion_state` (`0x0428`)
+  - `ussd_service_op` (`0x0501`)
+  - `billing_identification` (`0x060B`)
+  - `source_network_id` (`0x060D`) / `source_node_id` (`0x060E`)
+  - `dest_network_id` (`0x060F`) / `dest_node_id` (`0x0610`)
+  - `dest_addr_np_country` (`0x0100`) / `dest_addr_np_information` (`0x0102`) / `dest_addr_np_resolution` (`0x0103`)
+  - `alert_on_message_delivery` (`0x0422`)
+  - `network_error_code` (`0x0423`)
+  - `message_state` (`0x0427`)
+  - `receipted_message_id` (`0x001E`)
+  - `message_payload` (`0x0424`)
+- **Status Codes**: Full 51-code catalogue including `ESME_RSERTYPUNAUTH`, `ESME_RPROHIBITED`, `ESME_RSERTYPUNAVAIL`, `ESME_RSERTYPDENIED`.

@@ -389,3 +389,89 @@ func TestSMPPv5AndErrorSimulation(t *testing.T) {
 		t.Fatalf("expected no DLR for [DLR:DROP], but received one")
 	}
 }
+
+func TestAllSMPPOperationsAndV5RegisteredDelivery(t *testing.T) {
+	opV5 := op("fullproto")
+	opV5.SMPPVersion = "5.0"
+	srv := startServer(t, []config.Operator{opV5})
+
+	c := dial(t, srv.Operators()[0].Addr())
+	c.bind(t, "esme", "pw")
+
+	// 1. DataSM -> DataSMResp
+	sm := &smpp.SM{
+		SourceAddr: "ALPHA",
+		DestAddr:   "998901234567",
+		ShortMessage: []byte("DataSM test payload"),
+	}
+	seq1 := c.send(t, smpp.DataSM, sm.Encode())
+	r1 := c.readOf(t, smpp.DataSMResp, 2*time.Second)
+	if r1.Header.Status != smpp.ESME_ROK || r1.Header.Seq != seq1 {
+		t.Fatalf("DataSMResp status=%#x seq=%d", r1.Header.Status, r1.Header.Seq)
+	}
+
+	// 2. QuerySM -> QuerySMResp
+	seq2 := c.send(t, smpp.QuerySM, append([]byte("00000001"), 0, 1, 1, 0))
+	r2 := c.readOf(t, smpp.QuerySMResp, 2*time.Second)
+	if r2.Header.Status != smpp.ESME_ROK || r2.Header.Seq != seq2 {
+		t.Fatalf("QuerySMResp status=%#x seq=%d", r2.Header.Status, r2.Header.Seq)
+	}
+
+	// 3. SubmitMulti -> SubmitMultiResp
+	seq3 := c.send(t, smpp.SubmitMulti, sm.Encode())
+	r3 := c.readOf(t, smpp.SubmitMultiResp, 2*time.Second)
+	if r3.Header.Status != smpp.ESME_ROK || r3.Header.Seq != seq3 {
+		t.Fatalf("SubmitMultiResp status=%#x seq=%d", r3.Header.Status, r3.Header.Seq)
+	}
+
+	// 4. CancelSM -> CancelSMResp
+	seq4 := c.send(t, smpp.CancelSM, append([]byte("00000001"), 0, 1, 1, 0))
+	r4 := c.readOf(t, smpp.CancelSMResp, 2*time.Second)
+	if r4.Header.Status != smpp.ESME_ROK || r4.Header.Seq != seq4 {
+		t.Fatalf("CancelSMResp status=%#x seq=%d", r4.Header.Status, r4.Header.Seq)
+	}
+
+	// 5. ReplaceSM -> ReplaceSMResp
+	seq5 := c.send(t, smpp.ReplaceSM, append([]byte("00000001"), 0, 1, 1, 0, 0, 0, 0, 0))
+	r5 := c.readOf(t, smpp.ReplaceSMResp, 2*time.Second)
+	if r5.Header.Status != smpp.ESME_ROK || r5.Header.Seq != seq5 {
+		t.Fatalf("ReplaceSMResp status=%#x seq=%d", r5.Header.Status, r5.Header.Seq)
+	}
+
+	// 6. BroadcastSM (SMPP v5.0) -> BroadcastSMResp
+	seq6 := c.send(t, smpp.BroadcastSM, sm.Encode())
+	r6 := c.readOf(t, smpp.BroadcastSMResp, 2*time.Second)
+	if r6.Header.Status != smpp.ESME_ROK || r6.Header.Seq != seq6 {
+		t.Fatalf("BroadcastSMResp status=%#x seq=%d", r6.Header.Status, r6.Header.Seq)
+	}
+
+	// 7. SMPP v5 Registered Delivery (0x03 = Success Only)
+	// When outcome is DELIVRD -> receipt sent
+	smSuccessOnly := &smpp.SM{
+		SourceAddr: "ALPHA",
+		DestAddr:   "998901234567",
+		RegisteredDelivery: 3, // SMPP v5.0 success-only
+		ShortMessage: []byte("Success only DLR [DLR:DELIVRD]"),
+	}
+	c.send(t, smpp.SubmitSM, smSuccessOnly.Encode())
+	_ = c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	dlr1 := c.readOf(t, smpp.DeliverSM, 2*time.Second)
+	if dlr1 == nil {
+		t.Fatalf("expected DLR for successful message with reg_delivery=3")
+	}
+
+	// When outcome is UNDELIV with reg_delivery=3 -> NO receipt sent
+	smFailNoDLR := &smpp.SM{
+		SourceAddr: "ALPHA",
+		DestAddr:   "998901234567",
+		RegisteredDelivery: 3, // SMPP v5.0 success-only
+		ShortMessage: []byte("Failed message with success-only receipt [DLR:UNDELIV:1282]"),
+	}
+	c.send(t, smpp.SubmitSM, smFailNoDLR.Encode())
+	_ = c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	_ = c.conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	p, err := smpp.ReadRaw(c.br)
+	if err == nil && p.Header.ID == smpp.DeliverSM {
+		t.Fatalf("unexpected DLR received for failure when registered_delivery=0x03 (success only)")
+	}
+}

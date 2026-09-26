@@ -41,6 +41,12 @@ const (
 	AlertNotification   CommandID = 0x00000102
 	DataSM              CommandID = 0x00000103
 	DataSMResp          CommandID = 0x80000103
+	BroadcastSM           CommandID = 0x00000111 // SMPP v5.0 Cell Broadcast
+	BroadcastSMResp       CommandID = 0x80000111
+	QueryBroadcastSM      CommandID = 0x00000112 // SMPP v5.0
+	QueryBroadcastSMResp  CommandID = 0x80000112
+	CancelBroadcastSM     CommandID = 0x00000113 // SMPP v5.0
+	CancelBroadcastSMResp CommandID = 0x80000113
 )
 
 // IsBind reports whether id is one of the three bind requests.
@@ -73,6 +79,20 @@ func (id CommandID) RespID() CommandID {
 		return EnquireLinkResp
 	case DataSM:
 		return DataSMResp
+	case QuerySM:
+		return QuerySMResp
+	case CancelSM:
+		return CancelSMResp
+	case ReplaceSM:
+		return ReplaceSMResp
+	case SubmitMulti:
+		return SubmitMultiResp
+	case BroadcastSM:
+		return BroadcastSMResp
+	case QueryBroadcastSM:
+		return QueryBroadcastSMResp
+	case CancelBroadcastSM:
+		return CancelBroadcastSMResp
 	default:
 		return 0
 	}
@@ -152,6 +172,7 @@ const (
 	ESME_RSERTYPUNAUTH    Status = 0x00000100 // Service Type Not Authorized (SMPP v5.0)
 	ESME_RPROHIBITED      Status = 0x00000101 // Prohibited Destination (SMPP v5.0)
 	ESME_RSERTYPUNAVAIL   Status = 0x00000102 // Service Type Unavailable (SMPP v5.0)
+	ESME_RSERTYPDENIED    Status = 0x00000103 // Service Type Denied (SMPP v5.0)
 )
 
 var statusDetails = []struct {
@@ -209,6 +230,7 @@ var statusDetails = []struct {
 	{ESME_RSERTYPUNAUTH, "ESME_RSERTYPUNAUTH", "Service Type Not Authorized (SMPP v5.0)"},
 	{ESME_RPROHIBITED, "ESME_RPROHIBITED", "Prohibited Destination (SMPP v5.0)"},
 	{ESME_RSERTYPUNAVAIL, "ESME_RSERTYPUNAVAIL", "Service Type Unavailable (SMPP v5.0)"},
+	{ESME_RSERTYPDENIED, "ESME_RSERTYPDENIED", "Service Type Denied (SMPP v5.0)"},
 }
 
 // String returns the canonical SMPP constant name, e.g. "ESME_RTHROTTLED".
@@ -296,6 +318,16 @@ const (
 	TagMoreMessagesToSend uint16 = 0x0426
 	TagMessageStateOption uint16 = 0x0427
 	TagCongestionState    uint16 = 0x0428 // SMPP v5.0 congestion state TLV (0-100)
+	TagAlertOnMsgDelivery uint16 = 0x0422 // Alert on message delivery
+	TagUssdServiceOp      uint16 = 0x0501 // SMPP v5.0 USSD service operation
+	TagBillingID          uint16 = 0x060B // SMPP v5.0 billing identification
+	TagSourceNetworkID    uint16 = 0x060D // SMPP v5.0 routing network id
+	TagSourceNodeID       uint16 = 0x060E // SMPP v5.0 routing node id
+	TagDestNetworkID      uint16 = 0x060F // SMPP v5.0 routing network id
+	TagDestNodeID         uint16 = 0x0610 // SMPP v5.0 routing node id
+	TagDestAddrNPCountry  uint16 = 0x0100 // SMPP v5.0 number portability
+	TagDestAddrNPInfo     uint16 = 0x0102 // SMPP v5.0 number portability
+	TagDestAddrNPResolve  uint16 = 0x0103 // SMPP v5.0 number portability
 )
 
 // MessageState values for the message_state TLV (section 5.2.28).

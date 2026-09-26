@@ -81,3 +81,29 @@ func TestDecodeSMTruncated(t *testing.T) {
 		t.Fatal("expected error on truncated body")
 	}
 }
+
+func TestSMPPv5AndStatusParsing(t *testing.T) {
+	st, ok := ParseStatus("0x58")
+	if !ok || st != ESME_RTHROTTLED {
+		t.Fatalf("ParseStatus(0x58) = %v, %v; want ESME_RTHROTTLED", st, ok)
+	}
+
+	st59, ok := ParseStatus("ESME_RCONGESTION")
+	if !ok || st59 != ESME_RCONGESTION {
+		t.Fatalf("ParseStatus(ESME_RCONGESTION) = %v, %v; want ESME_RCONGESTION (0x59)", st59, ok)
+	}
+
+	if st59.String() != "ESME_RCONGESTION" {
+		t.Errorf("String() = %q, want ESME_RCONGESTION", st59.String())
+	}
+
+	statuses := AllStatuses()
+	if len(statuses) < 40 {
+		t.Errorf("AllStatuses() count = %d, expected >= 40", len(statuses))
+	}
+
+	respBody := EncodeSubmitSMRespWithTLVs("", TLV{Tag: TagCongestionState, Value: []byte{90}})
+	if len(respBody) < 6 {
+		t.Fatalf("expected TLV bytes in response body, got %d bytes", len(respBody))
+	}
+}

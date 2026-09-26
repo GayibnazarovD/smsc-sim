@@ -90,6 +90,8 @@ func (s *Store) migrate() error {
 		fault_reject_bind_pct REAL NOT NULL DEFAULT 0,
 		fault_generic_nack_pct REAL NOT NULL DEFAULT 0,
 		fault_submit_reject_pct REAL NOT NULL DEFAULT 0,
+		fault_submit_status INTEGER NOT NULL DEFAULT 0,
+		fault_submit_error_pct REAL NOT NULL DEFAULT 0,
 		fault_drop_after TEXT NOT NULL DEFAULT '0s',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -119,7 +121,13 @@ func (s *Store) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 	`
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add newer columns for backward compatibility with existing databases
+	_, _ = s.db.Exec(`ALTER TABLE operators ADD COLUMN fault_submit_status INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.Exec(`ALTER TABLE operators ADD COLUMN fault_submit_error_pct REAL NOT NULL DEFAULT 0`)
+	return nil
 }
 
 // HasUsers reports whether at least one user exists in the database.
@@ -314,7 +322,8 @@ func (s *Store) ListOperators() ([]config.Operator, error) {
 		       max_binds, window_size, throttle_tps, throttle_burst,
 		       latency_dist, latency_mean, latency_max, latency_jitter,
 		       dlr_enabled, dlr_min_delay, dlr_max_delay,
-		       fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct, fault_drop_after
+		       fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct,
+		       fault_submit_status, fault_submit_error_pct, fault_drop_after
 		FROM operators ORDER BY id ASC
 	`)
 	if err != nil {
@@ -340,7 +349,8 @@ func (s *Store) GetOperator(name string) (*config.Operator, error) {
 		       max_binds, window_size, throttle_tps, throttle_burst,
 		       latency_dist, latency_mean, latency_max, latency_jitter,
 		       dlr_enabled, dlr_min_delay, dlr_max_delay,
-		       fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct, fault_drop_after
+		       fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct,
+		       fault_submit_status, fault_submit_error_pct, fault_drop_after
 		FROM operators WHERE name = ?
 	`, name)
 
@@ -371,15 +381,17 @@ func (s *Store) CreateOperator(op config.Operator) error {
 			max_binds, window_size, throttle_tps, throttle_burst,
 			latency_dist, latency_mean, latency_max, latency_jitter,
 			dlr_enabled, dlr_min_delay, dlr_max_delay,
-			fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct, fault_drop_after,
+			fault_reject_bind_pct, fault_generic_nack_pct, fault_submit_reject_pct,
+			fault_submit_status, fault_submit_error_pct, fault_drop_after,
 			updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`,
 		op.Name, op.Listen, op.SMPPVersion, string(acctsJSON), string(bindTypesJSON),
 		op.MaxBinds, op.WindowSize, tps, burst,
 		op.SubmitRespLatency.Dist, op.SubmitRespLatency.Mean.String(), op.SubmitRespLatency.Max.String(), op.SubmitRespLatency.Jitter.String(),
 		dlrEnabled, op.DLR.Delay.Min.String(), op.DLR.Delay.Max.String(),
-		op.Faults.RejectBindPct, op.Faults.GenericNACKPct, op.Faults.SubmitRejectPct, op.Faults.DropAfter.String(),
+		op.Faults.RejectBindPct, op.Faults.GenericNACKPct, op.Faults.SubmitRejectPct,
+		op.Faults.SubmitStatus, op.Faults.SubmitErrorPct, op.Faults.DropAfter.String(),
 	)
 	return err
 }
@@ -401,7 +413,8 @@ func (s *Store) UpdateOperator(oldName string, op config.Operator) error {
 			max_binds = ?, window_size = ?, throttle_tps = ?, throttle_burst = ?,
 			latency_dist = ?, latency_mean = ?, latency_max = ?, latency_jitter = ?,
 			dlr_enabled = ?, dlr_min_delay = ?, dlr_max_delay = ?,
-			fault_reject_bind_pct = ?, fault_generic_nack_pct = ?, fault_submit_reject_pct = ?, fault_drop_after = ?,
+			fault_reject_bind_pct = ?, fault_generic_nack_pct = ?, fault_submit_reject_pct = ?,
+			fault_submit_status = ?, fault_submit_error_pct = ?, fault_drop_after = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE name = ?
 	`,
@@ -409,7 +422,8 @@ func (s *Store) UpdateOperator(oldName string, op config.Operator) error {
 		op.MaxBinds, op.WindowSize, tps, burst,
 		op.SubmitRespLatency.Dist, op.SubmitRespLatency.Mean.String(), op.SubmitRespLatency.Max.String(), op.SubmitRespLatency.Jitter.String(),
 		dlrEnabled, op.DLR.Delay.Min.String(), op.DLR.Delay.Max.String(),
-		op.Faults.RejectBindPct, op.Faults.GenericNACKPct, op.Faults.SubmitRejectPct, op.Faults.DropAfter.String(),
+		op.Faults.RejectBindPct, op.Faults.GenericNACKPct, op.Faults.SubmitRejectPct,
+		op.Faults.SubmitStatus, op.Faults.SubmitErrorPct, op.Faults.DropAfter.String(),
 		oldName,
 	)
 	if err != nil {
@@ -471,6 +485,8 @@ func scanOperator(s scanner) (config.Operator, error) {
 		dlrEnabledInt                                  int
 		dlrMinStr, dlrMaxStr                           string
 		rejectBindPct, genericNACKPct, submitRejectPct float64
+		submitStatus                                   uint32
+		submitErrorPct                                 float64
 		dropAfterStr                                   string
 	)
 
@@ -479,7 +495,8 @@ func scanOperator(s scanner) (config.Operator, error) {
 		&op.MaxBinds, &op.WindowSize, &tps, &burst,
 		&dist, &meanStr, &maxStr, &jitterStr,
 		&dlrEnabledInt, &dlrMinStr, &dlrMaxStr,
-		&rejectBindPct, &genericNACKPct, &submitRejectPct, &dropAfterStr,
+		&rejectBindPct, &genericNACKPct, &submitRejectPct,
+		&submitStatus, &submitErrorPct, &dropAfterStr,
 	)
 	if err != nil {
 		return op, err
@@ -512,6 +529,8 @@ func scanOperator(s scanner) (config.Operator, error) {
 	op.Faults.RejectBindPct = rejectBindPct
 	op.Faults.GenericNACKPct = genericNACKPct
 	op.Faults.SubmitRejectPct = submitRejectPct
+	op.Faults.SubmitStatus = submitStatus
+	op.Faults.SubmitErrorPct = submitErrorPct
 	op.Faults.DropAfter = parseDuration(dropAfterStr, 0)
 
 	return op, nil

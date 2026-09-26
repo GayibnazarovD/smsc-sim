@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"math/rand"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/dilshodgayibnazarov/smsc-sim/internal/dlr"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/smpp"
 )
 
@@ -246,6 +248,47 @@ func (s *session) handleSubmit(raw *smpp.RawPDU) {
 		s.send(smpp.SubmitSMResp, smpp.ESME_RINVMSGLEN, raw.Header.Seq, nil)
 		return
 	}
+
+	// 1. Dynamic Error Simulation via ShortMessage Text keywords
+	msgText := string(sm.Text())
+	if handled, drop, nack, simStatus := checkSubmitSimulation(msgText); handled {
+		if drop {
+			s.op.m.SubmitSM.WithLabelValues(name, "dropped").Inc()
+			s.op.srv.RecordEvent(name, "drop", "warn", "Simulated packet drop ([ERR_DROP])", fmt.Sprintf("From: %s To: %s", sm.SourceAddr, sm.DestAddr))
+			return
+		}
+		if nack {
+			s.op.m.SubmitSM.WithLabelValues(name, "rejected").Inc()
+			s.op.srv.RecordEvent(name, "nack", "error", "Simulated GenericNACK ([ERR_NACK])", fmt.Sprintf("From: %s To: %s", sm.SourceAddr, sm.DestAddr))
+			s.send(smpp.GenericNACK, smpp.ESME_RSYSERR, raw.Header.Seq, nil)
+			return
+		}
+		s.op.m.SubmitSM.WithLabelValues(name, "rejected").Inc()
+		s.op.srv.RecordEvent(name, "fault", "warn", fmt.Sprintf("Simulated status %s (0x%08X)", simStatus.String(), uint32(simStatus)), fmt.Sprintf("From: %s To: %s", sm.SourceAddr, sm.DestAddr))
+		if simStatus == smpp.ESME_RCONGESTION {
+			s.send(smpp.SubmitSMResp, simStatus, raw.Header.Seq, smpp.EncodeSubmitSMRespWithTLVs("", smpp.TLV{Tag: smpp.TagCongestionState, Value: []byte{95}}))
+		} else {
+			s.send(smpp.SubmitSMResp, simStatus, raw.Header.Seq, nil)
+		}
+		return
+	}
+
+	// 2. Configured Operator Fault Injection
+	if s.op.cfg.Faults.SubmitErrorPct > 0 && pct(s.rng, s.op.cfg.Faults.SubmitErrorPct) {
+		status := smpp.Status(s.op.cfg.Faults.SubmitStatus)
+		if status == 0 {
+			status = smpp.ESME_RSUBMITFAIL
+		}
+		s.op.m.SubmitSM.WithLabelValues(name, "rejected").Inc()
+		s.op.srv.RecordEvent(name, "fault", "warn", fmt.Sprintf("Operator fault injection %s (0x%08X)", status.String(), uint32(status)), fmt.Sprintf("From: %s To: %s", sm.SourceAddr, sm.DestAddr))
+		if status == smpp.ESME_RCONGESTION {
+			s.send(smpp.SubmitSMResp, status, raw.Header.Seq, smpp.EncodeSubmitSMRespWithTLVs("", smpp.TLV{Tag: smpp.TagCongestionState, Value: []byte{90}}))
+		} else {
+			s.send(smpp.SubmitSMResp, status, raw.Header.Seq, nil)
+		}
+		return
+	}
+
 	if s.op.cfg.Faults.GenericNACKPct > 0 && pct(s.rng, s.op.cfg.Faults.GenericNACKPct) {
 		s.op.m.SubmitSM.WithLabelValues(name, "rejected").Inc()
 		s.send(smpp.GenericNACK, smpp.ESME_RSYSERR, raw.Header.Seq, nil)
@@ -297,8 +340,22 @@ func (s *session) handleSubmit(raw *smpp.RawPDU) {
 }
 
 func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Time) {
+	msgText := string(sm.Text())
+	drop, outcomeOverride, delayOverride := checkDLRSimulation(msgText)
+	if drop {
+		s.op.srv.RecordEvent(s.op.Name(), "dlr", "warn", fmt.Sprintf("DLR dropped via [DLR:DROP] (%s)", msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
+		return
+	}
+
 	outcome := s.op.dlr.Pick(s.rng)
+	if outcomeOverride != nil {
+		outcome = *outcomeOverride
+	}
+
 	delay := s.op.dlr.Delay(s.rng)
+	if delayOverride != nil {
+		delay = *delayOverride
+	}
 
 	s.wg.Add(1)
 	go func() {
@@ -315,8 +372,117 @@ func (s *session) scheduleReceipt(sm *smpp.SM, msgID string, submittedAt time.Ti
 			return
 		}
 		s.op.m.DLRSent.WithLabelValues(s.op.Name(), outcome.Stat).Inc()
-		s.op.srv.RecordEvent(s.op.Name(), "dlr", "info", fmt.Sprintf("DLR delivered: %s (%s)", outcome.Stat, msgID), fmt.Sprintf("Dest: %s", sm.DestAddr))
+		s.op.srv.RecordEvent(s.op.Name(), "dlr", "info", fmt.Sprintf("DLR delivered: %s (%s, err=%d)", outcome.Stat, msgID, outcome.ErrCode), fmt.Sprintf("Dest: %s", sm.DestAddr))
 	}()
+}
+
+// checkSubmitSimulation inspects the message text for error simulation tags.
+func checkSubmitSimulation(text string) (handled bool, shouldDrop bool, nack bool, status smpp.Status) {
+	upper := strings.ToUpper(text)
+	if strings.Contains(upper, "[ERR_DROP]") {
+		return true, true, false, 0
+	}
+	if strings.Contains(upper, "[ERR_NACK]") {
+		return true, false, true, smpp.ESME_RSYSERR
+	}
+	if idx := strings.Index(upper, "[STATUS:"); idx != -1 {
+		end := strings.Index(upper[idx:], "]")
+		if end != -1 {
+			val := strings.TrimSpace(text[idx+len("[STATUS:") : idx+end])
+			if st, ok := smpp.ParseStatus(val); ok {
+				return true, false, false, st
+			}
+		}
+	}
+	namedMap := map[string]smpp.Status{
+		"[ERR_THROTTLED]":     smpp.ESME_RTHROTTLED,
+		"[ERR_CONGESTION]":    smpp.ESME_RCONGESTION,
+		"[ERR_MSGQFUL]":       smpp.ESME_RMSGQFUL,
+		"[ERR_QUEUE_FULL]":    smpp.ESME_RMSGQFUL,
+		"[ERR_INVDEST]":       smpp.ESME_RINVDSTADR,
+		"[ERR_INVALID_DEST]":  smpp.ESME_RINVDSTADR,
+		"[ERR_INVSRC]":        smpp.ESME_RINVSRCADR,
+		"[ERR_INVALID_SRC]":   smpp.ESME_RINVSRCADR,
+		"[ERR_SYSERR]":        smpp.ESME_RSYSERR,
+		"[ERR_SYSTEM]":        smpp.ESME_RSYSERR,
+		"[ERR_SUBMITFAIL]":    smpp.ESME_RSUBMITFAIL,
+		"[ERR_PROHIBITED]":    smpp.ESME_RPROHIBITED,
+		"[ERR_SERTYPUNAVAIL]": smpp.ESME_RSERTYPUNAVAIL,
+		"[ERR_SERTYPUNAUTH]":  smpp.ESME_RSERTYPUNAUTH,
+		"[ERR_INVMSGLEN]":     smpp.ESME_RINVMSGLEN,
+		"[ERR_INVESMCLASS]":   smpp.ESME_RINVESMCLASS,
+		"[ERR_INVSRCTON]":     smpp.ESME_RINVSRCTON,
+		"[ERR_INVDSTTON]":     smpp.ESME_RINVDSTTON,
+	}
+	for tag, st := range namedMap {
+		if strings.Contains(upper, tag) {
+			return true, false, false, st
+		}
+	}
+	return false, false, false, 0
+}
+
+// checkDLRSimulation inspects the message text for DLR simulation overrides.
+func checkDLRSimulation(text string) (drop bool, outcome *dlr.Outcome, delay *time.Duration) {
+	upper := strings.ToUpper(text)
+	if strings.Contains(upper, "[DLR:DROP]") {
+		return true, nil, nil
+	}
+
+	if idx := strings.Index(upper, "[DLR_DELAY:"); idx != -1 {
+		end := strings.Index(upper[idx:], "]")
+		if end != -1 {
+			raw := strings.TrimSpace(text[idx+len("[DLR_DELAY:") : idx+end])
+			if d, err := time.ParseDuration(raw); err == nil {
+				delay = &d
+			}
+		}
+	}
+
+	dlrKeywords := []struct {
+		tag        string
+		stat       string
+		state      uint8
+		defaultErr int
+	}{
+		{"[DLR:UNDELIV", "UNDELIV", smpp.StateUndeliverable, 1},
+		{"[DLR:EXPIRED", "EXPIRED", smpp.StateExpired, 2},
+		{"[DLR:REJECTD", "REJECTD", smpp.StateRejected, 4},
+		{"[DLR:DELETVD", "DELETVD", smpp.StateDeleted, 3},
+		{"[DLR:DELIVRD", "DELIVRD", smpp.StateDelivered, 0},
+		{"[DLR:ACCEPTD", "ACCEPTD", smpp.StateAccepted, 0},
+		{"[DLR:UNKNOWN", "UNKNOWN", smpp.StateUnknown, 0},
+	}
+
+	for _, k := range dlrKeywords {
+		if idx := strings.Index(upper, k.tag); idx != -1 {
+			end := strings.Index(upper[idx:], "]")
+			if end != -1 {
+				inner := text[idx+len(k.tag) : idx+end]
+				errCode := k.defaultErr
+				if strings.HasPrefix(inner, ":") {
+					val := strings.TrimPrefix(inner, ":")
+					if strings.HasPrefix(strings.ToLower(val), "0x") {
+						if c, err := strconv.ParseInt(val[2:], 16, 32); err == nil {
+							errCode = int(c)
+						}
+					} else {
+						if c, err := strconv.Atoi(val); err == nil {
+							errCode = c
+						}
+					}
+				}
+				outcome = &dlr.Outcome{
+					Stat:    k.stat,
+					State:   k.state,
+					ErrCode: errCode,
+				}
+				break
+			}
+		}
+	}
+
+	return false, outcome, delay
 }
 
 // sendMO delivers a mobile-originated message on this session.

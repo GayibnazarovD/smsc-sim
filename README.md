@@ -72,9 +72,23 @@ differs — see [`examples/uz-fleet.yaml`](examples/uz-fleet.yaml).
 
 ## What it simulates
 
-- **SMPP v3.3 / v3.4**: `bind_transmitter` / `bind_receiver` / `bind_transceiver`,
+- **SMPP v3.3 / v3.4 / v5.0**: Complete protocol support including `0x50` interface version
+  negotiation, `congestion_state` TLV (`0x0428`), `bind_transmitter` / `bind_receiver` / `bind_transceiver`,
   `unbind`, `enquire_link` (both directions), `submit_sm`, `deliver_sm`
-  (delivery receipts **and** mobile-originated), `generic_nack`.
+  (delivery receipts **and** mobile-originated), and `generic_nack`.
+- **Universal Error Simulation**:
+  - **Dynamic Message Keywords**: Inject errors on-the-fly per message without changing configs:
+    - `[ERR_THROTTLED]` &rarr; Returns `0x58` (`ESME_RTHROTTLED`)
+    - `[ERR_CONGESTION]` &rarr; Returns `0x59` (`ESME_RCONGESTION`) with `congestion_state` TLV
+    - `[ERR_MSGQFUL]` &rarr; Returns `0x14` (`ESME_RMSGQFUL`)
+    - `[ERR_INVDEST]` / `[ERR_INVSRC]` &rarr; Returns `0x0B` / `0x0A`
+    - `[STATUS:0x..]` or `[STATUS:name]` &rarr; Returns any of the 50 standard SMPP status codes
+    - `[ERR_DROP]` &rarr; Silently drops the PDU (simulating socket timeout/hang)
+    - `[ERR_NACK]` &rarr; Sends `generic_nack`
+    - `[DLR:UNDELIV:1282]` &rarr; Forces asynchronous delivery receipt with failure & network error code
+    - `[DLR:DROP]` &rarr; Simulates dropped/lost delivery receipt
+    - `[DLR_DELAY:5s]` &rarr; Overrides delivery receipt arrival delay
+  - **Configured Fault Injection**: Set failure rates (%) and target error status codes per operator via the Web UI or YAML.
 - **Real bind auth** — `system_id` / `password` (and optional `system_type`) are
   validated per account; wrong credentials get `ESME_RINVPASWD` / `ESME_RINVSYSID`.
 - **Per-operator throttling** — token bucket (`tps`+`burst`, or `count`+`window`);

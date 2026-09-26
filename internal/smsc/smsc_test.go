@@ -314,3 +314,78 @@ func TestDynamicOperatorLifecycle(t *testing.T) {
 	}
 }
 
+
+func TestSMPPv5AndErrorSimulation(t *testing.T) {
+	opV5 := op("v5sim")
+	opV5.SMPPVersion = "5.0"
+	srv := startServer(t, []config.Operator{opV5})
+
+	c := dial(t, srv.Operators()[0].Addr())
+
+	// 1. Verify SMPP v5.0 bind negotiation
+	bResp := c.bind(t, "esme", "pw")
+	if bResp.Header.Status != smpp.ESME_ROK {
+		t.Fatalf("bind failed: %#x", bResp.Header.Status)
+	}
+	respBind, err := smpp.DecodeBindResp(bResp.Body)
+	if err != nil {
+		t.Fatalf("DecodeBindResp: %v", err)
+	}
+	if respBind.ScInterfaceVersion != smpp.Version50 {
+		t.Errorf("ScInterfaceVersion = %#x, want %#x (Version50)", respBind.ScInterfaceVersion, smpp.Version50)
+	}
+
+	// 2. Keyword Error: [ERR_THROTTLED]
+	c.submit(t, "ALPHA", "998901234567", "Test [ERR_THROTTLED]", false)
+	r1 := c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	if r1.Header.Status != smpp.ESME_RTHROTTLED {
+		t.Fatalf("expected ESME_RTHROTTLED (0x58), got %#x", r1.Header.Status)
+	}
+
+	// 3. Keyword Error: [ERR_CONGESTION] with TLV TagCongestionState
+	c.submit(t, "ALPHA", "998901234567", "Test [ERR_CONGESTION]", false)
+	r2 := c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	if r2.Header.Status != smpp.ESME_RCONGESTION {
+		t.Fatalf("expected ESME_RCONGESTION (0x59), got %#x", r2.Header.Status)
+	}
+	// Verify congestion_state TLV in response body
+	if len(r2.Body) < 4 {
+		t.Fatalf("expected TLV in congestion resp body, got length %d", len(r2.Body))
+	}
+
+	// 4. Keyword Error: [STATUS:0x00000045]
+	c.submit(t, "ALPHA", "998901234567", "Test [STATUS:0x00000045]", false)
+	r3 := c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	if r3.Header.Status != smpp.ESME_RSUBMITFAIL {
+		t.Fatalf("expected ESME_RSUBMITFAIL (0x45), got %#x", r3.Header.Status)
+	}
+
+	// 5. Keyword DLR Error Override: [DLR:UNDELIV:1282]
+	c.submit(t, "ALPHA", "998901234567", "Test [DLR:UNDELIV:1282]", true)
+	r4 := c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	if r4.Header.Status != smpp.ESME_ROK {
+		t.Fatalf("expected submit ok, got %#x", r4.Header.Status)
+	}
+	dlr := c.readOf(t, smpp.DeliverSM, 2*time.Second)
+	sm, err := smpp.DecodeSM(dlr.Body)
+	if err != nil {
+		t.Fatalf("decode DLR: %v", err)
+	}
+	dlrText := string(sm.ShortMessage)
+	if !contains(dlrText, "stat:UNDELIV") || !contains(dlrText, "err:1282") {
+		t.Fatalf("DLR text = %q, want stat:UNDELIV err:1282", dlrText)
+	}
+
+	// 6. Keyword DLR Drop: [DLR:DROP]
+	c.submit(t, "ALPHA", "998901234567", "Test [DLR:DROP]", true)
+	r5 := c.readOf(t, smpp.SubmitSMResp, 2*time.Second)
+	if r5.Header.Status != smpp.ESME_ROK {
+		t.Fatalf("expected submit ok, got %#x", r5.Header.Status)
+	}
+	// Verify no DeliverSM is received
+	_ = c.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	p, err := smpp.ReadRaw(c.br)
+	if err == nil && p.Header.ID == smpp.DeliverSM {
+		t.Fatalf("expected no DLR for [DLR:DROP], but received one")
+	}
+}

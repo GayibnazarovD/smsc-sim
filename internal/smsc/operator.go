@@ -149,10 +149,14 @@ func (op *Operator) bindAllowed(id smpp.CommandID) bool {
 
 // scVersion is the sc_interface_version the operator advertises in bind_resp.
 func (op *Operator) scVersion() uint8 {
-	if op.cfg.SMPPVersion == "3.3" {
+	switch op.cfg.SMPPVersion {
+	case "3.3":
 		return 0 // 3.3 has no sc_interface_version TLV
+	case "5.0", "5":
+		return smpp.Version50
+	default:
+		return smpp.Version34
 	}
-	return smpp.Version34
 }
 
 func (op *Operator) nextMessageID() string {

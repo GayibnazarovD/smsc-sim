@@ -77,7 +77,9 @@ func run(cfgPath, dbPath string) error {
 		} else {
 			// In DB-first mode, database operators take precedence over empty defaults
 			stored, err := st.ListOperators()
-			if err == nil {
+			if err != nil {
+				log.Error("failed to load operators from database", "err", err)
+			} else {
 				cfg.Operators = stored
 				log.Info("loaded operators from database", "count", len(stored))
 			}

@@ -44,6 +44,32 @@ func (b *Bind) Encode() []byte {
 	return w.bytesVal()
 }
 
+// BindResp is the decoded body of a bind response.
+type BindResp struct {
+	SystemID           string
+	ScInterfaceVersion uint8
+	TLVs               []TLV
+}
+
+// DecodeBindResp parses a bind response body.
+func DecodeBindResp(body []byte) (*BindResp, error) {
+	r := &reader{b: body}
+	resp := &BindResp{
+		SystemID: r.cstr(),
+	}
+	tlvs, err := decodeTLVs(r.rest())
+	if err != nil {
+		return nil, err
+	}
+	resp.TLVs = tlvs
+	for _, t := range tlvs {
+		if t.Tag == TagSCInterfaceVersion && len(t.Value) > 0 {
+			resp.ScInterfaceVersion = t.Value[0]
+		}
+	}
+	return resp, nil
+}
+
 // EncodeBindResp builds a bind_*_resp body: system_id C-Octet String plus an
 // optional sc_interface_version TLV when scVersion != 0.
 func EncodeBindResp(systemID string, scVersion uint8) []byte {
@@ -162,10 +188,23 @@ func (s *SM) WantsReceipt() bool {
 }
 
 // EncodeSubmitSMResp builds a submit_sm_resp body (message_id C-Octet String).
-// For a non-zero command_status the body is empty per spec.
+// For a non-zero command_status without TLVs the body is empty per spec.
 func EncodeSubmitSMResp(messageID string) []byte {
 	w := &writer{}
 	w.cstr(messageID)
+	return w.bytesVal()
+}
+
+// EncodeSubmitSMRespWithTLVs builds a submit_sm_resp body with optional TLVs
+// (e.g. congestion_state for ESME_RCONGESTION in SMPP v5.0).
+func EncodeSubmitSMRespWithTLVs(messageID string, tlvs ...TLV) []byte {
+	w := &writer{}
+	w.cstr(messageID)
+	for _, t := range tlvs {
+		w.u16(t.Tag)
+		w.u16(uint16(len(t.Value)))
+		w.raw(t.Value)
+	}
 	return w.bytesVal()
 }
 

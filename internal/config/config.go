@@ -134,10 +134,12 @@ type MO struct {
 
 // Faults injects protocol-level misbehaviour for resilience testing.
 type Faults struct {
-	RejectBindPct   float64  `yaml:"reject_bind_pct"`
-	GenericNACKPct  float64  `yaml:"generic_nack_pct"`
-	SubmitRejectPct float64  `yaml:"submit_reject_pct"`
-	DropAfter       Duration `yaml:"drop_after"` // close a bound session this long after bind; 0 = never
+	RejectBindPct   float64  `yaml:"reject_bind_pct" json:"reject_bind_pct"`
+	GenericNACKPct  float64  `yaml:"generic_nack_pct" json:"generic_nack_pct"`
+	SubmitRejectPct float64  `yaml:"submit_reject_pct" json:"submit_reject_pct"`
+	SubmitStatus    uint32   `yaml:"submit_status" json:"submit_status"`
+	SubmitErrorPct  float64  `yaml:"submit_error_pct" json:"submit_error_pct"`
+	DropAfter       Duration `yaml:"drop_after" json:"drop_after"` // close a bound session this long after bind; 0 = never
 }
 
 // Concat controls delivery-receipt message-id behaviour for multipart SMS.
@@ -302,8 +304,8 @@ func (c *Config) validate() error {
 				return fmt.Errorf("operator %q: account[%d] has empty system_id", op.Name, j)
 			}
 		}
-		if op.SMPPVersion != "3.3" && op.SMPPVersion != "3.4" {
-			return fmt.Errorf("operator %q: smpp_version must be 3.3 or 3.4, got %q", op.Name, op.SMPPVersion)
+		if op.SMPPVersion != "3.3" && op.SMPPVersion != "3.4" && op.SMPPVersion != "5.0" && op.SMPPVersion != "5" {
+			return fmt.Errorf("operator %q: smpp_version must be 3.3, 3.4, or 5.0, got %q", op.Name, op.SMPPVersion)
 		}
 		for _, bt := range op.BindTypes {
 			if !knownBindTypes[bt] {

@@ -554,8 +554,9 @@
               <div class="form-group col-6">
                 <label for="op-version-select" class="form-label">SMPP Version</label>
                 <select id="op-version-select" class="form-select">
-                  <option value="3.4" selected>SMPP v3.4</option>
-                  <option value="3.3">SMPP v3.3</option>
+                  <option value="3.4" selected>SMPP v3.4 (Standard)</option>
+                  <option value="5.0">SMPP v5.0 (Congestion State &amp; Advanced)</option>
+                  <option value="3.3">SMPP v3.3 (Legacy)</option>
                 </select>
               </div>
               <div class="form-group col-6">
@@ -613,6 +614,64 @@
                 <div class="form-group col-6">
                   <label for="op-dlr-max-input" class="form-label">Max Delay</label>
                   <input type="text" id="op-dlr-max-input" class="form-input" value="15s">
+                </div>
+              </div>
+            </div>
+
+            <!-- Error Simulation / Fault Injection Section -->
+            <div class="form-section">
+              <div class="section-header">
+                <span class="section-title">Error Simulation &amp; Fault Injection</span>
+                <span class="badge badge-warn">Simulate Any SMPP Error</span>
+              </div>
+              <div class="form-row">
+                <div class="form-group col-8">
+                  <label for="op-fault-status-select" class="form-label">Simulated Submit Error Status Code</label>
+                  <select id="op-fault-status-select" class="form-select font-mono">
+                    <option value="0">None / Success (0x00000000 - ESME_ROK)</option>
+                    <option value="88">0x00000058 - ESME_RTHROTTLED (Rate limit exceeded)</option>
+                    <option value="89">0x00000059 - ESME_RCONGESTION (SMPP v5.0 Congestion)</option>
+                    <option value="20">0x00000014 - ESME_RMSGQFUL (Message Queue Full)</option>
+                    <option value="69">0x00000045 - ESME_RSUBMITFAIL (Submit Failed)</option>
+                    <option value="11">0x0000000B - ESME_RINVDSTADR (Invalid Destination)</option>
+                    <option value="10">0x0000000A - ESME_RINVSRCADR (Invalid Source)</option>
+                    <option value="8">0x00000008 - ESME_RSYSERR (System Error)</option>
+                    <option value="257">0x00000101 - ESME_RPROHIBITED (Destination Prohibited v5)</option>
+                    <option value="258">0x00000102 - ESME_RSERTYPUNAVAIL (Service Unavailable v5)</option>
+                  </select>
+                </div>
+                <div class="form-group col-4">
+                  <label for="op-fault-error-pct-input" class="form-label">Error Rate (%)</label>
+                  <input type="number" id="op-fault-error-pct-input" class="form-input" value="0" min="0" max="100" step="1">
+                </div>
+              </div>
+              <div class="form-row" style="margin-top: 8px;">
+                <div class="form-group col-6">
+                  <label for="op-fault-bind-pct-input" class="form-label">Reject Bind (%)</label>
+                  <input type="number" id="op-fault-bind-pct-input" class="form-input" value="0" min="0" max="100" step="1">
+                </div>
+                <div class="form-group col-6">
+                  <label for="op-fault-nack-pct-input" class="form-label">Generic NACK (%)</label>
+                  <input type="number" id="op-fault-nack-pct-input" class="form-input" value="0" min="0" max="100" step="1">
+                </div>
+              </div>
+
+              <!-- Keyword Simulation Info Box -->
+              <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 12px; color: #94a3b8;">
+                <div style="font-weight: 600; color: #38bdf8; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                  <span>⚡ On-The-Fly Simulation Keywords (Inside Message Text)</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-family: monospace;">
+                  <div><span style="color: #f59e0b;">[ERR_THROTTLED]</span> &rarr; 0x58 Throttled</div>
+                  <div><span style="color: #f59e0b;">[ERR_CONGESTION]</span> &rarr; 0x59 Congestion + TLV</div>
+                  <div><span style="color: #f59e0b;">[ERR_MSGQFUL]</span> &rarr; 0x14 Queue Full</div>
+                  <div><span style="color: #f59e0b;">[ERR_INVDEST]</span> &rarr; 0x0B Invalid Dest</div>
+                  <div><span style="color: #f59e0b;">[ERR_DROP]</span> &rarr; Silent Packet Drop</div>
+                  <div><span style="color: #f59e0b;">[ERR_NACK]</span> &rarr; Generic NACK</div>
+                  <div><span style="color: #ec4899;">[STATUS:0x..]</span> &rarr; Any status code</div>
+                  <div><span style="color: #10b981;">[DLR:UNDELIV:xxx]</span> &rarr; DLR Failure</div>
+                  <div><span style="color: #10b981;">[DLR:EXPIRED]</span> &rarr; DLR Expired</div>
+                  <div><span style="color: #10b981;">[DLR:DROP]</span> &rarr; Drop DLR</div>
                 </div>
               </div>
             </div>

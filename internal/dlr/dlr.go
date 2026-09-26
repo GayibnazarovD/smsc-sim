@@ -101,7 +101,11 @@ func (e *Engine) Delay(rng *rand.Rand) time.Duration {
 // submit_sm, messageID the id returned in submit_sm_resp, submittedAt when the
 // submit was accepted, and now the receipt time.
 func (e *Engine) Build(orig *smpp.SM, messageID string, o Outcome, submittedAt, now time.Time) *smpp.SM {
-	text := renderTemplate(e.cfg.Template, receiptFields{
+	tmpl := e.cfg.Template
+	if tmpl == "" {
+		tmpl = config.DefaultReceiptTemplate
+	}
+	text := renderTemplate(tmpl, receiptFields{
 		msgID:       messageID,
 		stat:        o.Stat,
 		errCode:     o.ErrCode,

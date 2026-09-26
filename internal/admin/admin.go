@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/config"
+	"github.com/dilshodgayibnazarov/smsc-sim/internal/smpp"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/smsc"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/store"
 )
@@ -360,6 +361,11 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 	// ----------------------------------------------------
 	// Protected Admin Management Endpoints
 	// ----------------------------------------------------
+
+	// GET /admin/statuses returns the complete catalogue of SMPP status codes
+	mux.HandleFunc("GET /admin/statuses", protect(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, smpp.AllStatuses())
+	}))
 
 	mux.HandleFunc("GET /admin/overview", protect(func(w http.ResponseWriter, _ *http.Request) {
 		ops := srv.Operators()

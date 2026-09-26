@@ -117,6 +117,10 @@
     opDlrFields: document.getElementById('op-dlr-fields'),
     opDlrMinInput: document.getElementById('op-dlr-min-input'),
     opDlrMaxInput: document.getElementById('op-dlr-max-input'),
+    opFaultStatusSelect: document.getElementById('op-fault-status-select'),
+    opFaultErrorPctInput: document.getElementById('op-fault-error-pct-input'),
+    opFaultBindPctInput: document.getElementById('op-fault-bind-pct-input'),
+    opFaultNackPctInput: document.getElementById('op-fault-nack-pct-input'),
 
     // Delete Operator Modal
     deleteOpModal: document.getElementById('delete-operator-modal'),
@@ -168,6 +172,29 @@
   };
 
   // Initialize
+
+  async function loadStatuses() {
+    try {
+      const res = await apiFetch('/admin/statuses');
+      if (!res.ok) return;
+      const list = await res.json();
+      if (!Array.isArray(list) || list.length === 0) return;
+
+      const sel = el.opFaultStatusSelect;
+      if (!sel) return;
+      const currVal = sel.value;
+      sel.innerHTML = '<option value="0">None / Success (0x00000000 - ESME_ROK)</option>';
+      list.forEach((st) => {
+        if (st.code === 0) return;
+        const opt = document.createElement('option');
+        opt.value = st.code;
+        opt.textContent = `${st.hex} - ${st.name} (${st.description})`;
+        sel.appendChild(opt);
+      });
+      if (currVal) sel.value = currVal;
+    } catch (_) {}
+  }
+
   async function init() {
     setupEventListeners();
     setupRouting();
@@ -866,6 +893,10 @@
     el.opThrottleFields.style.display = 'flex';
     el.opDlrEnabledCheckbox.checked = true;
     el.opDlrFields.style.display = 'flex';
+    if (el.opFaultStatusSelect) el.opFaultStatusSelect.value = '0';
+    if (el.opFaultErrorPctInput) el.opFaultErrorPctInput.value = '0';
+    if (el.opFaultBindPctInput) el.opFaultBindPctInput.value = '0';
+    if (el.opFaultNackPctInput) el.opFaultNackPctInput.value = '0';
 
     el.operatorModal.classList.remove('hidden');
     el.opNameInput.focus();
@@ -911,6 +942,19 @@
       if (op.dlr && op.dlr.delay) {
         el.opDlrMinInput.value = op.dlr.delay.min || '2s';
         el.opDlrMaxInput.value = op.dlr.delay.max || '15s';
+      }
+
+      if (el.opFaultStatusSelect) {
+        el.opFaultStatusSelect.value = (op.faults && op.faults.submit_status !== undefined) ? op.faults.submit_status : '0';
+      }
+      if (el.opFaultErrorPctInput) {
+        el.opFaultErrorPctInput.value = (op.faults && op.faults.submit_error_pct !== undefined) ? op.faults.submit_error_pct : '0';
+      }
+      if (el.opFaultBindPctInput) {
+        el.opFaultBindPctInput.value = (op.faults && op.faults.reject_bind_pct !== undefined) ? op.faults.reject_bind_pct : '0';
+      }
+      if (el.opFaultNackPctInput) {
+        el.opFaultNackPctInput.value = (op.faults && op.faults.generic_nack_pct !== undefined) ? op.faults.generic_nack_pct : '0';
       }
 
       el.operatorModal.classList.remove('hidden');
@@ -994,6 +1038,13 @@
           min: el.opDlrMinInput.value.trim() || '2s',
           max: el.opDlrMaxInput.value.trim() || '15s',
         },
+      },
+      faults: {
+        submit_status: el.opFaultStatusSelect ? (parseInt(el.opFaultStatusSelect.value, 10) || 0) : 0,
+        submit_error_pct: el.opFaultErrorPctInput ? (parseFloat(el.opFaultErrorPctInput.value) || 0) : 0,
+        reject_bind_pct: el.opFaultBindPctInput ? (parseFloat(el.opFaultBindPctInput.value) || 0) : 0,
+        generic_nack_pct: el.opFaultNackPctInput ? (parseFloat(el.opFaultNackPctInput.value) || 0) : 0,
+        drop_after: '0s',
       },
     };
 

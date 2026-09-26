@@ -45,6 +45,26 @@
           <span class="pill-val" id="telemetry-uptime">0s</span>
         </div>
 
+                <div class="user-profile-badge hidden" id="user-profile-badge">
+          <div class="user-pill">
+            <span class="user-avatar-icon">👤</span>
+            <span class="user-name-text" id="nav-user-name">admin</span>
+          </div>
+          <button class="btn btn-ghost btn-xs" id="btn-change-password" title="Change Admin Password">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </button>
+          <button class="btn btn-ghost btn-xs text-danger" id="btn-sign-out" title="Sign Out">
+            <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
+
         <div class="refresh-controls">
           <label for="poll-interval-select" class="sr-only">Refresh Rate</label>
           <select id="poll-interval-select" class="ctrl-select" title="Auto-refresh interval">
@@ -620,6 +640,90 @@
           <button class="btn btn-secondary" id="del-op-cancel-btn">Cancel</button>
           <button class="btn btn-danger" id="del-op-confirm-btn">Delete Connection</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Authentication / Setup Screen Backdrop -->
+    <div class="auth-screen-backdrop hidden" id="auth-screen">
+      <div class="auth-card" id="auth-card">
+        <div class="auth-header">
+          <div class="auth-logo-badge" id="auth-icon-badge">🛡️</div>
+          <h2 class="auth-title" id="auth-title">First-Time Deployment Setup</h2>
+          <p class="auth-subtitle" id="auth-subtitle">
+            Configure the primary administrator account to secure your SMSC Simulator instance.
+          </p>
+        </div>
+
+        <div class="alert alert-danger hidden" id="auth-error-alert"></div>
+
+        <!-- First-Time Setup Form -->
+        <form id="setup-form" class="auth-form">
+          <div class="form-group">
+            <label for="setup-username-input" class="form-label">Administrator Username</label>
+            <input type="text" id="setup-username-input" class="form-input" value="admin" required minlength="3">
+          </div>
+          <div class="form-group">
+            <label for="setup-password-input" class="form-label">Master Password (min 8 characters)</label>
+            <input type="password" id="setup-password-input" class="form-input" placeholder="Enter secure password" required minlength="8">
+          </div>
+          <div class="form-group">
+            <label for="setup-confirm-input" class="form-label">Confirm Master Password</label>
+            <input type="password" id="setup-confirm-input" class="form-input" placeholder="Repeat password" required minlength="8">
+          </div>
+          <div class="form-actions" style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary btn-block btn-lg" id="setup-submit-btn">
+              Complete Setup & Secure Instance
+            </button>
+          </div>
+        </form>
+
+        <!-- Login Form -->
+        <form id="login-form" class="auth-form hidden">
+          <div class="form-group">
+            <label for="login-username-input" class="form-label">Username</label>
+            <input type="text" id="login-username-input" class="form-input" placeholder="admin" required>
+          </div>
+          <div class="form-group">
+            <label for="login-password-input" class="form-label">Password</label>
+            <input type="password" id="login-password-input" class="form-input" placeholder="••••••••" required>
+          </div>
+          <div class="form-actions" style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary btn-block btn-lg" id="login-submit-btn">
+              Sign In
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div class="modal-backdrop hidden" id="change-password-modal">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Change Administrator Password</h3>
+          <button class="modal-close-btn" id="pw-modal-close-btn">&times;</button>
+        </div>
+        <form id="change-password-form">
+          <div class="modal-body">
+            <div class="alert alert-danger hidden" id="pw-error-alert"></div>
+            <div class="form-group">
+              <label for="pw-old-input" class="form-label">Current Password</label>
+              <input type="password" id="pw-old-input" class="form-input" required>
+            </div>
+            <div class="form-group">
+              <label for="pw-new-input" class="form-label">New Password (min 8 characters)</label>
+              <input type="password" id="pw-new-input" class="form-input" minlength="8" required>
+            </div>
+            <div class="form-group">
+              <label for="pw-confirm-input" class="form-label">Confirm New Password</label>
+              <input type="password" id="pw-confirm-input" class="form-input" minlength="8" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="pw-cancel-btn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="pw-save-btn">Update Password</button>
+          </div>
+        </form>
       </div>
     </div>
 

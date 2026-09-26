@@ -15,3 +15,7 @@ coverage.txt
 # Local config that isn't an example
 /smsc-sim.yaml
 /*.local.yaml
+
+# Database files
+*.db
+*.db-*

@@ -30,7 +30,7 @@ var version = "dev"
 
 func main() {
 	var (
-		cfgPath     = flag.String("config", "smsc-sim.yaml", "path to the YAML config file")
+		cfgPath     = flag.String("config", "", "optional path to YAML config file")
 		dbPath      = flag.String("db", "smsc-sim.db", "path to SQLite database file")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
@@ -48,29 +48,39 @@ func main() {
 }
 
 func run(cfgPath, dbPath string) error {
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
+	var (
+		cfg *config.Config
+		err error
+	)
+
+	if cfgPath != "" {
+		cfg, err = config.Load(cfgPath)
+		if err != nil {
+			return fmt.Errorf("load config %q: %w", cfgPath, err)
+		}
+	} else {
+		// Sane defaults for global open-source deployment
+		cfg = &config.Config{
+			Admin:   config.Listen{Addr: ":8081"},
+			Metrics: config.Listen{Addr: ":9090"},
+		}
 	}
 
 	log := newLogger(cfg.Log)
 	log.Info("starting smsc-sim", "version", version, "db", dbPath, "seed", cfg.Seed)
 
-	st, err := store.Open(dbPath)
-	if err != nil {
-		log.Warn("failed to open database, continuing without persistence", "err", err)
-	} else {
-		// Seed database from config if empty
-		if len(cfg.Operators) > 0 {
-			if err := st.SeedIfEmpty(cfg.Operators); err != nil {
-				log.Warn("failed to seed database from config", "err", err)
+	var st *store.Store
+	if dbPath != "" {
+		st, err = store.Open(dbPath)
+		if err != nil {
+			log.Warn("failed to open database, continuing without persistence", "err", err)
+		} else {
+			// In DB-first mode, database operators take precedence over empty defaults
+			stored, err := st.ListOperators()
+			if err == nil {
+				cfg.Operators = stored
+				log.Info("loaded operators from database", "count", len(stored))
 			}
-		}
-		// Load operators from database
-		stored, err := st.ListOperators()
-		if err == nil && len(stored) > 0 {
-			cfg.Operators = stored
-			log.Info("loaded operators from database", "count", len(stored))
 		}
 	}
 

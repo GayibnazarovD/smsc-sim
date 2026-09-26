@@ -41,31 +41,31 @@ type Listen struct {
 // Operator is one simulated SMSC endpoint. Fields also present in the top-level
 // `defaults` block are inherited unless the operator overrides them.
 type Operator struct {
-	Name     string    `yaml:"name"`
-	Listen   string    `yaml:"listen"`
-	Accounts []Account `yaml:"accounts"`
+	Name     string    `yaml:"name" json:"name"`
+	Listen   string    `yaml:"listen" json:"listen"`
+	Accounts []Account `yaml:"accounts" json:"accounts"`
 
-	SMPPVersion         string   `yaml:"smpp_version"` // "3.3" | "3.4" (default 3.4)
-	BindTypes           []string `yaml:"bind_types"`   // tx, rx, trx; empty = all
-	MaxBinds            int      `yaml:"max_binds"`    // 0 = unlimited
-	WindowSize          int      `yaml:"window_size"`  // in-flight submit_sm cap; 0 = unlimited
-	EnquireLinkInterval Duration `yaml:"enquire_link_interval"`
-	SessionIdleTimeout  Duration `yaml:"session_idle_timeout"`
+	SMPPVersion         string   `yaml:"smpp_version" json:"smpp_version"` // "3.3" | "3.4" (default 3.4)
+	BindTypes           []string `yaml:"bind_types" json:"bind_types"`   // tx, rx, trx; empty = all
+	MaxBinds            int      `yaml:"max_binds" json:"max_binds"`    // 0 = unlimited
+	WindowSize          int      `yaml:"window_size" json:"window_size"`  // in-flight submit_sm cap; 0 = unlimited
+	EnquireLinkInterval Duration `yaml:"enquire_link_interval" json:"enquire_link_interval"`
+	SessionIdleTimeout  Duration `yaml:"session_idle_timeout" json:"session_idle_timeout"`
 
-	SubmitRespLatency Latency  `yaml:"submit_resp_latency"`
-	Throttle          Throttle `yaml:"throttle"`
-	DLR               DLR      `yaml:"dlr"`
-	MO                MO       `yaml:"mo"`
-	Faults            Faults   `yaml:"faults"`
-	Concat            Concat   `yaml:"concat"`
-	TLS               *TLS     `yaml:"tls"`
+	SubmitRespLatency Latency  `yaml:"submit_resp_latency" json:"submit_resp_latency"`
+	Throttle          Throttle `yaml:"throttle" json:"throttle"`
+	DLR               DLR      `yaml:"dlr" json:"dlr"`
+	MO                MO       `yaml:"mo" json:"mo"`
+	Faults            Faults   `yaml:"faults" json:"faults"`
+	Concat            Concat   `yaml:"concat" json:"concat"`
+	TLS               *TLS     `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
 // Account is a valid bind credential set for an operator.
 type Account struct {
-	SystemID   string `yaml:"system_id"`
-	Password   string `yaml:"password"`
-	SystemType string `yaml:"system_type"` // "" = accept any
+	SystemID   string `yaml:"system_id" json:"system_id"`
+	Password   string `yaml:"password" json:"password"`
+	SystemType string `yaml:"system_type" json:"system_type"` // "" = accept any
 }
 
 // Latency describes the delay before a submit_sm_resp is sent.
@@ -80,10 +80,10 @@ type Latency struct {
 // Throttle is a per-operator submit_sm rate limit. Exceeding it yields
 // ESME_RTHROTTLED. Give either tps(+burst) or count+window.
 type Throttle struct {
-	TPS    float64  `yaml:"tps"`
-	Burst  float64  `yaml:"burst"`
-	Count  int      `yaml:"count"`
-	Window Duration `yaml:"window"`
+	TPS    float64  `yaml:"tps" json:"tps"`
+	Burst  float64  `yaml:"burst" json:"burst"`
+	Count  int      `yaml:"count" json:"count"`
+	Window Duration `yaml:"window" json:"window"`
 }
 
 // Rate resolves the throttle to a token-bucket (rate tokens/sec, burst
@@ -107,12 +107,12 @@ func (t Throttle) Rate() (rate, burst float64, limited bool) {
 
 // DLR configures the asynchronous delivery-receipt engine.
 type DLR struct {
-	Enabled  *bool          `yaml:"enabled"` // nil => enabled
-	Delay    Range          `yaml:"delay"`
-	Outcomes map[string]int `yaml:"outcomes"`  // stat word -> weight
-	ErrCodes map[string]int `yaml:"err_codes"` // stat word -> err value
-	TLV      bool           `yaml:"tlv"`       // append message_state / receipted_message_id / network_error_code
-	Template string         `yaml:"receipt_template"`
+	Enabled  *bool          `yaml:"enabled" json:"enabled"` // nil => enabled
+	Delay    Range          `yaml:"delay" json:"delay"`
+	Outcomes map[string]int `yaml:"outcomes" json:"outcomes"`  // stat word -> weight
+	ErrCodes map[string]int `yaml:"err_codes" json:"err_codes"` // stat word -> err value
+	TLV      bool           `yaml:"tlv" json:"tlv"`       // append message_state / receipted_message_id / network_error_code
+	Template string         `yaml:"receipt_template" json:"receipt_template"`
 }
 
 // IsEnabled reports whether receipts should be generated.

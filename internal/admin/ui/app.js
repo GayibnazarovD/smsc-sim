@@ -19,6 +19,8 @@
     operatorFilter: '',
     eventOpFilter: 'all',
     eventTypeFilter: 'all',
+    currentUser: null,
+    isAuthRequired: false,
   };
 
   // DOM Elements
@@ -122,6 +124,34 @@
     delOpCancelBtn: document.getElementById('del-op-cancel-btn'),
     delOpConfirmBtn: document.getElementById('del-op-confirm-btn'),
     
+    // Auth & User Elements
+    userProfileBadge: document.getElementById('user-profile-badge'),
+    navUserName: document.getElementById('nav-user-name'),
+    btnChangePassword: document.getElementById('btn-change-password'),
+    btnSignOut: document.getElementById('btn-sign-out'),
+    authScreen: document.getElementById('auth-screen'),
+    authTitle: document.getElementById('auth-title'),
+    authSubtitle: document.getElementById('auth-subtitle'),
+    authIconBadge: document.getElementById('auth-icon-badge'),
+    authErrorAlert: document.getElementById('auth-error-alert'),
+    setupForm: document.getElementById('setup-form'),
+    setupUsernameInput: document.getElementById('setup-username-input'),
+    setupPasswordInput: document.getElementById('setup-password-input'),
+    setupConfirmInput: document.getElementById('setup-confirm-input'),
+    setupSubmitBtn: document.getElementById('setup-submit-btn'),
+    loginForm: document.getElementById('login-form'),
+    loginUsernameInput: document.getElementById('login-username-input'),
+    loginPasswordInput: document.getElementById('login-password-input'),
+    loginSubmitBtn: document.getElementById('login-submit-btn'),
+    changePasswordModal: document.getElementById('change-password-modal'),
+    pwModalCloseBtn: document.getElementById('pw-modal-close-btn'),
+    pwCancelBtn: document.getElementById('pw-cancel-btn'),
+    pwSaveBtn: document.getElementById('pw-save-btn'),
+    changePasswordForm: document.getElementById('change-password-form'),
+    pwOldInput: document.getElementById('pw-old-input'),
+    pwNewInput: document.getElementById('pw-new-input'),
+    pwConfirmInput: document.getElementById('pw-confirm-input'),
+    pwErrorAlert: document.getElementById('pw-error-alert'),
     // Toast
     toastContainer: document.getElementById('toast-container'),
   };
@@ -136,12 +166,15 @@
   };
 
   // Initialize
-  function init() {
+  async function init() {
     setupEventListeners();
     setupRouting();
     renderMOHistory();
-    startPolling();
-    refreshAll();
+    const isAuthed = await checkAuthStatus();
+    if (isAuthed) {
+      startPolling();
+      refreshAll();
+    }
   }
 
   // Routing and Tabs
@@ -174,6 +207,240 @@
 
     if (viewName === 'config' && !state.config) {
       fetchConfig();
+    }
+  }
+
+
+  // Authentication & Security Handlers
+  async function apiFetch(url, options = {}) {
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+      pausePolling();
+      let errData = {};
+      try {
+        errData = await res.clone().json();
+      } catch (_) {}
+      if (errData.error === 'setup_required') {
+        showAuthScreen('setup');
+      } else {
+        showAuthScreen('login');
+      }
+      throw new Error(errData.message || 'Unauthorized');
+    }
+    return res;
+  }
+
+  async function checkAuthStatus() {
+    try {
+      const res = await fetch('/admin/auth/status');
+      if (!res.ok) throw new Error('Status HTTP ' + res.status);
+      const data = await res.json();
+      if (!data.initialized) {
+        showAuthScreen('setup');
+        return false;
+      }
+      if (!data.authenticated) {
+        showAuthScreen('login');
+        return false;
+      }
+      state.currentUser = data.user;
+      updateUserBadge(data.user);
+      hideAuthScreen();
+      return true;
+    } catch (err) {
+      console.error('Check auth status failed:', err);
+      return false;
+    }
+  }
+
+  function showAuthScreen(type) {
+    if (!el.authScreen) return;
+    el.authScreen.classList.remove('hidden');
+    el.authErrorAlert.classList.add('hidden');
+    el.authErrorAlert.textContent = '';
+
+    if (type === 'setup') {
+      el.authTitle.textContent = 'First-Time Deployment Setup';
+      el.authSubtitle.textContent = 'Configure the master administrator account to secure your SMSC Simulator instance.';
+      el.authIconBadge.textContent = '🛡️';
+      el.setupForm.classList.remove('hidden');
+      el.loginForm.classList.add('hidden');
+    } else {
+      el.authTitle.textContent = 'Sign In to SMSC Simulator';
+      el.authSubtitle.textContent = 'Enter your administrator credentials to access the console.';
+      el.authIconBadge.textContent = '📡';
+      el.setupForm.classList.add('hidden');
+      el.loginForm.classList.remove('hidden');
+    }
+  }
+
+  function hideAuthScreen() {
+    if (el.authScreen) {
+      el.authScreen.classList.add('hidden');
+    }
+  }
+
+  function updateUserBadge(user) {
+    if (!el.userProfileBadge) return;
+    if (user && user.username) {
+      el.navUserName.textContent = user.username;
+      el.userProfileBadge.classList.remove('hidden');
+    } else {
+      el.userProfileBadge.classList.add('hidden');
+    }
+  }
+
+  async function handleSetupSubmit(e) {
+    e.preventDefault();
+    el.authErrorAlert.classList.add('hidden');
+
+    const username = el.setupUsernameInput.value.trim();
+    const password = el.setupPasswordInput.value;
+    const confirmPassword = el.setupConfirmInput.value;
+
+    if (password !== confirmPassword) {
+      el.authErrorAlert.textContent = 'Passwords do not match.';
+      el.authErrorAlert.classList.remove('hidden');
+      return;
+    }
+    if (password.length < 8) {
+      el.authErrorAlert.textContent = 'Password must be at least 8 characters long.';
+      el.authErrorAlert.classList.remove('hidden');
+      return;
+    }
+
+    el.setupSubmitBtn.disabled = true;
+    el.setupSubmitBtn.textContent = 'Initializing...';
+
+    try {
+      const res = await fetch('/admin/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          confirm_password: confirmPassword,
+        }),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || 'Setup failed');
+      }
+
+      showToast('Admin account initialized successfully', 'success');
+      state.currentUser = body.user;
+      updateUserBadge(body.user);
+      hideAuthScreen();
+      startPolling();
+      refreshAll();
+    } catch (err) {
+      el.authErrorAlert.textContent = err.message;
+      el.authErrorAlert.classList.remove('hidden');
+    } finally {
+      el.setupSubmitBtn.disabled = false;
+      el.setupSubmitBtn.textContent = 'Complete Setup & Secure Instance';
+    }
+  }
+
+  async function handleLoginSubmit(e) {
+    e.preventDefault();
+    el.authErrorAlert.classList.add('hidden');
+
+    const username = el.loginUsernameInput.value.trim();
+    const password = el.loginPasswordInput.value;
+
+    el.loginSubmitBtn.disabled = true;
+    el.loginSubmitBtn.textContent = 'Signing in...';
+
+    try {
+      const res = await fetch('/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || 'Invalid credentials');
+      }
+
+      showToast(`Welcome back, ${body.user.username}!`, 'success');
+      state.currentUser = body.user;
+      updateUserBadge(body.user);
+      hideAuthScreen();
+      startPolling();
+      refreshAll();
+    } catch (err) {
+      el.authErrorAlert.textContent = err.message;
+      el.authErrorAlert.classList.remove('hidden');
+    } finally {
+      el.loginSubmitBtn.disabled = false;
+      el.loginSubmitBtn.textContent = 'Sign In';
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await fetch('/admin/auth/logout', { method: 'POST' });
+    } catch (_) {}
+    state.currentUser = null;
+    pausePolling();
+    updateUserBadge(null);
+    showAuthScreen('login');
+    showToast('Signed out', 'info');
+  }
+
+  function openChangePasswordModal() {
+    el.pwErrorAlert.classList.add('hidden');
+    el.changePasswordForm.reset();
+    el.changePasswordModal.classList.remove('hidden');
+    el.pwOldInput.focus();
+  }
+
+  function closeChangePasswordModal() {
+    el.changePasswordModal.classList.add('hidden');
+  }
+
+  async function handleChangePasswordSubmit(e) {
+    e.preventDefault();
+    el.pwErrorAlert.classList.add('hidden');
+
+    const oldPassword = el.pwOldInput.value;
+    const newPassword = el.pwNewInput.value;
+    const confirmPassword = el.pwConfirmInput.value;
+
+    if (newPassword !== confirmPassword) {
+      el.pwErrorAlert.textContent = 'New passwords do not match.';
+      el.pwErrorAlert.classList.remove('hidden');
+      return;
+    }
+    if (newPassword.length < 8) {
+      el.pwErrorAlert.textContent = 'New password must be at least 8 characters.';
+      el.pwErrorAlert.classList.remove('hidden');
+      return;
+    }
+
+    el.pwSaveBtn.disabled = true;
+    try {
+      const res = await apiFetch('/admin/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          old_password: oldPassword,
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Password update failed');
+      showToast('Password updated successfully', 'success');
+      closeChangePasswordModal();
+    } catch (err) {
+      el.pwErrorAlert.textContent = err.message;
+      el.pwErrorAlert.classList.remove('hidden');
+    } finally {
+      el.pwSaveBtn.disabled = false;
     }
   }
 
@@ -311,6 +578,16 @@
       if (e.target === el.deleteOpModal) closeDeleteOpModal();
     });
     el.delOpConfirmBtn.addEventListener('click', confirmDeleteOperator);
+
+    // Auth listeners
+    if (el.setupForm) el.setupForm.addEventListener('submit', handleSetupSubmit);
+    if (el.loginForm) el.loginForm.addEventListener('submit', handleLoginSubmit);
+    if (el.btnSignOut) el.btnSignOut.addEventListener('click', handleSignOut);
+    if (el.btnChangePassword) el.btnChangePassword.addEventListener('click', openChangePasswordModal);
+    if (el.pwModalCloseBtn) el.pwModalCloseBtn.addEventListener('click', closeChangePasswordModal);
+    if (el.pwCancelBtn) el.pwCancelBtn.addEventListener('click', closeChangePasswordModal);
+    if (el.changePasswordForm) el.changePasswordForm.addEventListener('submit', handleChangePasswordSubmit);
+
   }
 
   function updatePauseUI() {
@@ -361,7 +638,7 @@
   }
 
   async function fetchOverview() {
-    const res = await fetch('/admin/overview');
+    const res = await apiFetch('/admin/overview');
     if (!res.ok) throw new Error('Overview HTTP ' + res.status);
     const data = await res.json();
     state.overview = data;
@@ -372,7 +649,7 @@
   }
 
   async function fetchSessions() {
-    const res = await fetch('/admin/sessions');
+    const res = await apiFetch('/admin/sessions');
     if (!res.ok) throw new Error('Sessions HTTP ' + res.status);
     const data = await res.json();
     state.sessions = Array.isArray(data) ? data : [];
@@ -390,7 +667,7 @@
 
   async function fetchConfig() {
     try {
-      const res = await fetch('/admin/config');
+      const res = await apiFetch('/admin/config');
       if (!res.ok) throw new Error('Config HTTP ' + res.status);
       const data = await res.json();
       state.config = data;
@@ -447,6 +724,28 @@
     el.operatorsGrid.innerHTML = '';
 
     if (filtered.length === 0) {
+      if (ops.length === 0) {
+        el.operatorsGrid.innerHTML = `
+          <div class="empty-state card" style="grid-column: 1 / -1; padding: 56px 24px; text-align: center; border: 1px dashed rgba(255,255,255,0.15);">
+            <div style="font-size: 3rem; margin-bottom: 14px;">🌐</div>
+            <h3 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin-bottom: 8px;">No SMSC Connections Configured</h3>
+            <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto 24px auto; line-height: 1.6;">
+              This instance is ready for open-source global usage. Click <strong>+ Add Connection</strong> to create your first simulated operator endpoint (custom port, SMPP credentials, TPS rate limit, and latency).
+            </p>
+            <button class="btn btn-primary btn-lg" id="btn-empty-add-op" style="margin: 0 auto;">
+              <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Connection
+            </button>
+          </div>
+        `;
+        const btn = document.getElementById('btn-empty-add-op');
+        if (btn) btn.addEventListener('click', openAddOperatorModal);
+        return;
+      }
+
       el.operatorsGrid.innerHTML = `
         <div class="empty-state" style="grid-column: 1 / -1;">
           <div class="empty-icon">🔍</div>
@@ -572,7 +871,7 @@
     el.operatorModalTitle.textContent = `Edit Connection: ${opName}`;
 
     try {
-      const res = await fetch(`/admin/operators/${encodeURIComponent(opName)}`);
+      const res = await apiFetch(`/admin/operators/${encodeURIComponent(opName)}`);
       if (!res.ok) throw new Error('Failed to fetch operator config');
       const op = await res.json();
 
@@ -724,7 +1023,7 @@
 
     el.delOpConfirmBtn.disabled = true;
     try {
-      const res = await fetch(`/admin/operators/${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`/admin/operators/${encodeURIComponent(name)}`, {
         method: 'DELETE',
       });
       const body = await res.json();
@@ -1034,7 +1333,7 @@
 
     el.modalConfirmBtn.disabled = true;
     try {
-      const res = await fetch(`/admin/sessions/${encodeURIComponent(id)}/disconnect`, {
+      const res = await apiFetch(`/admin/sessions/${encodeURIComponent(id)}/disconnect`, {
         method: 'POST',
       });
       if (!res.ok) {

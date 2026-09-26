@@ -18,7 +18,7 @@ import (
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/store"
 )
 
-func setupTestServer(t *testing.T) (*smsc.Server, *store.Store, http.Handler) {
+func setupTestServer(t *testing.T) (*smsc.Server, *store.Store, http.Handler, string) {
 	t.Helper()
 	cfg := &config.Config{
 		Seed: 42,
@@ -48,12 +48,30 @@ func setupTestServer(t *testing.T) (*smsc.Server, *store.Store, http.Handler) {
 	}
 	_ = st.SeedIfEmpty(cfg.Operators)
 
+	// Create test admin user and session
+	u, err := st.CreateUser("admin", "adminpass123", "admin")
+	if err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+	sess, err := st.CreateSession(u, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("create test session: %v", err)
+	}
+
 	h := Handler(srv, st, log)
-	return srv, st, h
+	return srv, st, h, sess.Token
+}
+
+func authedReq(method, path, token string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, path, body)
+	if token != "" {
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	}
+	return req
 }
 
 func TestWebUIRoutes(t *testing.T) {
-	_, _, h := setupTestServer(t)
+	_, _, h, _ := setupTestServer(t)
 
 	// Test GET / (index.html)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -87,10 +105,116 @@ func TestWebUIRoutes(t *testing.T) {
 	}
 }
 
-func TestAdminAPIRoutes(t *testing.T) {
-	srv, _, h := setupTestServer(t)
+func TestAuthEndpoints(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{Seed: 42}
+	srv := smsc.New(cfg, log, metrics.New(prometheus.NewRegistry()))
+	_ = srv.Start()
 
-	// Healthz
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	h := Handler(srv, st, log)
+
+	// 1. Initial status: uninitialized
+	reqStatus := httptest.NewRequest(http.MethodGet, "/admin/auth/status", nil)
+	wStatus := httptest.NewRecorder()
+	h.ServeHTTP(wStatus, reqStatus)
+	if wStatus.Code != http.StatusOK {
+		t.Fatalf("auth status expected 200, got %d", wStatus.Code)
+	}
+	var stResp authStatusResp
+	_ = json.NewDecoder(wStatus.Body).Decode(&stResp)
+	if stResp.Initialized || stResp.Authenticated {
+		t.Fatalf("expected uninitialized system: %+v", stResp)
+	}
+
+	// 2. Unauthenticated access to /admin/overview rejected with 401 setup_required
+	reqOv := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	wOv := httptest.NewRecorder()
+	h.ServeHTTP(wOv, reqOv)
+	if wOv.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 unauthorized, got %d", wOv.Code)
+	}
+	if !strings.Contains(wOv.Body.String(), "setup_required") {
+		t.Fatalf("expected setup_required error, got: %s", wOv.Body.String())
+	}
+
+	// 3. Setup first user
+	setupBody := `{"username": "admin", "password": "masterpassword123", "confirm_password": "masterpassword123"}`
+	reqSetup := httptest.NewRequest(http.MethodPost, "/admin/auth/setup", strings.NewReader(setupBody))
+	wSetup := httptest.NewRecorder()
+	h.ServeHTTP(wSetup, reqSetup)
+	if wSetup.Code != http.StatusCreated {
+		t.Fatalf("setup expected 201, got %d: %s", wSetup.Code, wSetup.Body.String())
+	}
+	cookies := wSetup.Result().Cookies()
+	var sessionToken string
+	for _, c := range cookies {
+		if c.Name == sessionCookieName {
+			sessionToken = c.Value
+		}
+	}
+	if sessionToken == "" {
+		t.Fatalf("expected session cookie to be set")
+	}
+
+	// 4. Repeated setup should be forbidden (403)
+	reqSetup2 := httptest.NewRequest(http.MethodPost, "/admin/auth/setup", strings.NewReader(setupBody))
+	wSetup2 := httptest.NewRecorder()
+	h.ServeHTTP(wSetup2, reqSetup2)
+	if wSetup2.Code != http.StatusForbidden {
+		t.Fatalf("repeated setup expected 403, got %d", wSetup2.Code)
+	}
+
+	// 5. Check status with session token
+	reqStatusAuthed := httptest.NewRequest(http.MethodGet, "/admin/auth/status", nil)
+	reqStatusAuthed.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionToken})
+	wStatusAuthed := httptest.NewRecorder()
+	h.ServeHTTP(wStatusAuthed, reqStatusAuthed)
+	if wStatusAuthed.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wStatusAuthed.Code)
+	}
+	var stAuthed authStatusResp
+	_ = json.NewDecoder(wStatusAuthed.Body).Decode(&stAuthed)
+	if !stAuthed.Initialized || !stAuthed.Authenticated || stAuthed.User.Username != "admin" {
+		t.Fatalf("expected authed status, got %+v", stAuthed)
+	}
+
+	// 6. Login endpoint
+	loginBody := `{"username": "admin", "password": "masterpassword123"}`
+	reqLogin := httptest.NewRequest(http.MethodPost, "/admin/auth/login", strings.NewReader(loginBody))
+	wLogin := httptest.NewRecorder()
+	h.ServeHTTP(wLogin, reqLogin)
+	if wLogin.Code != http.StatusOK {
+		t.Fatalf("login expected 200, got %d: %s", wLogin.Code, wLogin.Body.String())
+	}
+
+	// 7. Change password
+	changeBody := `{"old_password": "masterpassword123", "new_password": "newpassword456", "confirm_password": "newpassword456"}`
+	reqChange := authedReq(http.MethodPost, "/admin/auth/change-password", sessionToken, strings.NewReader(changeBody))
+	wChange := httptest.NewRecorder()
+	h.ServeHTTP(wChange, reqChange)
+	if wChange.Code != http.StatusOK {
+		t.Fatalf("change password expected 200, got %d: %s", wChange.Code, wChange.Body.String())
+	}
+
+	// 8. Logout
+	reqLogout := authedReq(http.MethodPost, "/admin/auth/logout", sessionToken, nil)
+	wLogout := httptest.NewRecorder()
+	h.ServeHTTP(wLogout, reqLogout)
+	if wLogout.Code != http.StatusOK {
+		t.Fatalf("logout expected 200, got %d", wLogout.Code)
+	}
+}
+
+func TestAdminAPIRoutes(t *testing.T) {
+	srv, _, h, token := setupTestServer(t)
+
+	// Healthz (open)
 	reqHealth := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	wHealth := httptest.NewRecorder()
 	h.ServeHTTP(wHealth, reqHealth)
@@ -99,11 +223,11 @@ func TestAdminAPIRoutes(t *testing.T) {
 	}
 
 	// Overview
-	reqOv := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	reqOv := authedReq(http.MethodGet, "/admin/overview", token, nil)
 	wOv := httptest.NewRecorder()
 	h.ServeHTTP(wOv, reqOv)
 	if wOv.Code != http.StatusOK {
-		t.Fatalf("overview failed: %d", wOv.Code)
+		t.Fatalf("overview failed: %d %s", wOv.Code, wOv.Body.String())
 	}
 	var ov OverviewSnapshot
 	if err := json.NewDecoder(wOv.Body).Decode(&ov); err != nil {
@@ -117,7 +241,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 	}
 
 	// Operators
-	reqOps := httptest.NewRequest(http.MethodGet, "/admin/operators", nil)
+	reqOps := authedReq(http.MethodGet, "/admin/operators", token, nil)
 	wOps := httptest.NewRecorder()
 	h.ServeHTTP(wOps, reqOps)
 	if wOps.Code != http.StatusOK {
@@ -132,7 +256,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 	}
 
 	// Sessions (empty initially)
-	reqSess := httptest.NewRequest(http.MethodGet, "/admin/sessions", nil)
+	reqSess := authedReq(http.MethodGet, "/admin/sessions", token, nil)
 	wSess := httptest.NewRecorder()
 	h.ServeHTTP(wSess, reqSess)
 	if wSess.Code != http.StatusOK {
@@ -140,7 +264,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 	}
 
 	// Disconnect unknown session
-	reqDisc := httptest.NewRequest(http.MethodPost, "/admin/sessions/unknown-id/disconnect", nil)
+	reqDisc := authedReq(http.MethodPost, "/admin/sessions/unknown-id/disconnect", token, nil)
 	wDisc := httptest.NewRecorder()
 	h.ServeHTTP(wDisc, reqDisc)
 	if wDisc.Code != http.StatusNotFound {
@@ -149,7 +273,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 
 	// Events
 	srv.RecordEvent("test-op", "bind", "info", "Test bind event", "remote=127.0.0.1")
-	reqEv := httptest.NewRequest(http.MethodGet, "/admin/events?limit=10", nil)
+	reqEv := authedReq(http.MethodGet, "/admin/events?limit=10", token, nil)
 	wEv := httptest.NewRecorder()
 	h.ServeHTTP(wEv, reqEv)
 	if wEv.Code != http.StatusOK {
@@ -164,7 +288,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 	}
 
 	// Config
-	reqCfg := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
+	reqCfg := authedReq(http.MethodGet, "/admin/config", token, nil)
 	wCfg := httptest.NewRecorder()
 	h.ServeHTTP(wCfg, reqCfg)
 	if wCfg.Code != http.StatusOK {
@@ -173,7 +297,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 
 	// MO injection without receiver fails with 409
 	moBody := strings.NewReader(`{"source":"123","dest":"456","text":"hello"}`)
-	reqMO := httptest.NewRequest(http.MethodPost, "/admin/operators/test-op/mo", moBody)
+	reqMO := authedReq(http.MethodPost, "/admin/operators/test-op/mo", token, moBody)
 	wMO := httptest.NewRecorder()
 	h.ServeHTTP(wMO, reqMO)
 	if wMO.Code != http.StatusConflict {
@@ -182,7 +306,7 @@ func TestAdminAPIRoutes(t *testing.T) {
 }
 
 func TestOperatorCRUD(t *testing.T) {
-	_, _, h := setupTestServer(t)
+	_, _, h, token := setupTestServer(t)
 
 	// POST /admin/operators
 	body := `{
@@ -192,7 +316,7 @@ func TestOperatorCRUD(t *testing.T) {
 		"accounts": [{"system_id": "cx_user", "password": "cx_password"}],
 		"throttle": {"tps": 200, "burst": 200}
 	}`
-	reqCreate := httptest.NewRequest(http.MethodPost, "/admin/operators", strings.NewReader(body))
+	reqCreate := authedReq(http.MethodPost, "/admin/operators", token, strings.NewReader(body))
 	wCreate := httptest.NewRecorder()
 	h.ServeHTTP(wCreate, reqCreate)
 
@@ -201,7 +325,7 @@ func TestOperatorCRUD(t *testing.T) {
 	}
 
 	// GET /admin/operators/carrier-x
-	reqGet := httptest.NewRequest(http.MethodGet, "/admin/operators/carrier-x", nil)
+	reqGet := authedReq(http.MethodGet, "/admin/operators/carrier-x", token, nil)
 	wGet := httptest.NewRecorder()
 	h.ServeHTTP(wGet, reqGet)
 	if wGet.Code != http.StatusOK {
@@ -223,7 +347,7 @@ func TestOperatorCRUD(t *testing.T) {
 		"accounts": [{"system_id": "cx_user", "password": "new_password"}],
 		"throttle": {"tps": 500, "burst": 500}
 	}`
-	reqPut := httptest.NewRequest(http.MethodPut, "/admin/operators/carrier-x", strings.NewReader(updateBody))
+	reqPut := authedReq(http.MethodPut, "/admin/operators/carrier-x", token, strings.NewReader(updateBody))
 	wPut := httptest.NewRecorder()
 	h.ServeHTTP(wPut, reqPut)
 	if wPut.Code != http.StatusOK {
@@ -231,7 +355,7 @@ func TestOperatorCRUD(t *testing.T) {
 	}
 
 	// DELETE /admin/operators/carrier-x
-	reqDel := httptest.NewRequest(http.MethodDelete, "/admin/operators/carrier-x", nil)
+	reqDel := authedReq(http.MethodDelete, "/admin/operators/carrier-x", token, nil)
 	wDel := httptest.NewRecorder()
 	h.ServeHTTP(wDel, reqDel)
 	if wDel.Code != http.StatusOK {
@@ -239,7 +363,7 @@ func TestOperatorCRUD(t *testing.T) {
 	}
 
 	// GET after delete should 404
-	reqGet404 := httptest.NewRequest(http.MethodGet, "/admin/operators/carrier-x", nil)
+	reqGet404 := authedReq(http.MethodGet, "/admin/operators/carrier-x", token, nil)
 	wGet404 := httptest.NewRecorder()
 	h.ServeHTTP(wGet404, reqGet404)
 	if wGet404.Code != http.StatusNotFound {

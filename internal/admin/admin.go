@@ -1,9 +1,10 @@
 // Package admin exposes an HTTP API and an embedded Web Admin UI for introspecting
-// the simulator, managing client sessions, monitoring throughput, and injecting
-// mobile-originated messages at runtime.
+// the simulator, managing client sessions, monitoring throughput, configuring operators,
+// and securing access with user authentication.
 package admin
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/config"
@@ -21,35 +23,32 @@ import (
 //go:embed ui/*
 var uiFS embed.FS
 
+const sessionCookieName = "smsc_session"
+
+type contextKey string
+
+const sessionContextKey contextKey = "smsc_session"
+
 // OverviewSnapshot provides high-level telemetry and status across all operators.
 type OverviewSnapshot struct {
-	Uptime               string           `json:"uptime"`
-	UptimeSeconds        int64            `json:"uptime_seconds"`
-	StartTime            time.Time        `json:"start_time"`
-	OperatorsCount       int              `json:"operators_count"`
-	ActiveBindsCount     int              `json:"active_binds_count"`
-	TotalMessagesSeen    uint64           `json:"total_messages_seen"`
-	DLREnabledOperators  int              `json:"dlr_enabled_operators"`
-	ThrottledOperators   int              `json:"throttled_operators"`
-	Operators            []smsc.Snapshot  `json:"operators"`
+	Uptime              string          `json:"uptime"`
+	UptimeSeconds       int64           `json:"uptime_seconds"`
+	StartTime           time.Time       `json:"start_time"`
+	OperatorsCount      int             `json:"operators_count"`
+	ActiveBindsCount    int             `json:"active_binds_count"`
+	TotalMessagesSeen   uint64          `json:"total_messages_seen"`
+	DLREnabledOperators int             `json:"dlr_enabled_operators"`
+	ThrottledOperators  int             `json:"throttled_operators"`
+	Operators           []smsc.Snapshot `json:"operators"`
+}
+
+type authStatusResp struct {
+	Initialized   bool        `json:"initialized"`
+	Authenticated bool        `json:"authenticated"`
+	User          *store.User `json:"user,omitempty"`
 }
 
 // Handler returns the admin API and Web UI mux.
-//
-//	GET    /                               -> Web Admin UI dashboard
-//	GET    /ui/*                           -> Static UI assets (CSS, JS)
-//	GET    /healthz                        -> 200 "ok"
-//	GET    /admin/overview                 -> Aggregate system overview
-//	GET    /admin/operators                -> [ { operator snapshot } ]
-//	POST   /admin/operators                -> Create new operator (DB & runtime)
-//	GET    /admin/operators/{name}         -> Get single operator config
-//	PUT    /admin/operators/{name}         -> Update operator (DB & runtime)
-//	DELETE /admin/operators/{name}         -> Delete operator (DB & runtime)
-//	GET    /admin/sessions                 -> [ { session snapshot } ]
-//	POST   /admin/sessions/{id}/disconnect -> Disconnect an active ESME session
-//	GET    /admin/events                   -> [ { event } ]
-//	GET    /admin/config                   -> Active YAML config
-//	POST   /admin/operators/{name}/mo     -> Inject a mobile-originated message
 func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
@@ -81,7 +80,288 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	mux.HandleFunc("GET /admin/overview", func(w http.ResponseWriter, _ *http.Request) {
+	// Helper to extract session token from cookie or Authorization header
+	extractToken := func(r *http.Request) string {
+		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+			return c.Value
+		}
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			return strings.TrimPrefix(authHeader, "Bearer ")
+		}
+		return ""
+	}
+
+	// ----------------------------------------------------
+	// Authentication Endpoints
+	// ----------------------------------------------------
+
+	// GET /admin/auth/status
+	mux.HandleFunc("GET /admin/auth/status", func(w http.ResponseWriter, r *http.Request) {
+		if st == nil {
+			writeJSON(w, http.StatusOK, authStatusResp{
+				Initialized:   true,
+				Authenticated: true,
+				User:          &store.User{Username: "anonymous", Role: "admin"},
+			})
+			return
+		}
+
+		hasUsers, err := st.HasUsers()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{"failed checking users: " + err.Error()})
+			return
+		}
+
+		if !hasUsers {
+			writeJSON(w, http.StatusOK, authStatusResp{
+				Initialized:   false,
+				Authenticated: false,
+			})
+			return
+		}
+
+		token := extractToken(r)
+		sess, err := st.ValidateSession(token)
+		if err != nil {
+			writeJSON(w, http.StatusOK, authStatusResp{
+				Initialized:   true,
+				Authenticated: false,
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, authStatusResp{
+			Initialized:   true,
+			Authenticated: true,
+			User: &store.User{
+				ID:       sess.UserID,
+				Username: sess.Username,
+				Role:     sess.Role,
+			},
+		})
+	})
+
+	// POST /admin/auth/setup (First-time deployment setup)
+	mux.HandleFunc("POST /admin/auth/setup", func(w http.ResponseWriter, r *http.Request) {
+		if st == nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"database store not enabled"})
+			return
+		}
+
+		hasUsers, err := st.HasUsers()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{err.Error()})
+			return
+		}
+		if hasUsers {
+			writeJSON(w, http.StatusForbidden, errBody{"initial setup has already been completed"})
+			return
+		}
+
+		var req struct {
+			Username        string `json:"username"`
+			Password        string `json:"password"`
+			ConfirmPassword string `json:"confirm_password"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON: " + err.Error()})
+			return
+		}
+
+		if req.Username == "" || req.Password == "" {
+			writeJSON(w, http.StatusBadRequest, errBody{"username and password are required"})
+			return
+		}
+		if req.Password != req.ConfirmPassword {
+			writeJSON(w, http.StatusBadRequest, errBody{"passwords do not match"})
+			return
+		}
+
+		u, err := st.CreateUser(req.Username, req.Password, "admin")
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{err.Error()})
+			return
+		}
+
+		sess, err := st.CreateSession(u, 24*time.Hour)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{"failed to create session: " + err.Error()})
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    sess.Token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   86400,
+		})
+
+		log.Info("admin: initial setup completed, created admin user", "username", u.Username)
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"status": "ok",
+			"user":   u,
+			"token":  sess.Token,
+		})
+	})
+
+	// POST /admin/auth/login
+	mux.HandleFunc("POST /admin/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if st == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
+
+		hasUsers, _ := st.HasUsers()
+		if !hasUsers {
+			writeJSON(w, http.StatusBadRequest, errBody{"system uninitialized, complete first-time setup first"})
+			return
+		}
+
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON: " + err.Error()})
+			return
+		}
+
+		u, err := st.AuthenticateUser(req.Username, req.Password)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errBody{"invalid username or password"})
+			return
+		}
+
+		sess, err := st.CreateSession(u, 24*time.Hour)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{"failed to create session: " + err.Error()})
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    sess.Token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   86400,
+		})
+
+		log.Info("admin: user logged in", "username", u.Username)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"user":   u,
+			"token":  sess.Token,
+		})
+	})
+
+	// POST /admin/auth/logout
+	mux.HandleFunc("POST /admin/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if st != nil {
+			token := extractToken(r)
+			_ = st.DeleteSession(token)
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
+	})
+
+	// Auth Guard Middleware for Protected Endpoints
+	protect := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if st == nil {
+				next(w, r)
+				return
+			}
+
+			hasUsers, err := st.HasUsers()
+			if err != nil || !hasUsers {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"error":   "setup_required",
+					"message": "First-time deployment setup required",
+				})
+				return
+			}
+
+			token := extractToken(r)
+			sess, err := st.ValidateSession(token)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"error":   "unauthorized",
+					"message": "Authentication required. Please sign in.",
+				})
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), sessionContextKey, sess)
+			next(w, r.WithContext(ctx))
+		}
+	}
+
+	// POST /admin/auth/change-password (Protected)
+	mux.HandleFunc("POST /admin/auth/change-password", protect(func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := r.Context().Value(sessionContextKey).(*store.Session)
+		if !ok || sess == nil {
+			writeJSON(w, http.StatusUnauthorized, errBody{"unauthorized"})
+			return
+		}
+
+		var req struct {
+			OldPassword     string `json:"old_password"`
+			NewPassword     string `json:"new_password"`
+			ConfirmPassword string `json:"confirm_password"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON: " + err.Error()})
+			return
+		}
+
+		if req.NewPassword != req.ConfirmPassword {
+			writeJSON(w, http.StatusBadRequest, errBody{"new passwords do not match"})
+			return
+		}
+
+		if err := st.ChangePassword(sess.Username, req.OldPassword, req.NewPassword); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{err.Error()})
+			return
+		}
+
+		// Re-authenticate and issue fresh session cookie
+		u, _ := st.AuthenticateUser(sess.Username, req.NewPassword)
+		if u != nil {
+			newSess, err := st.CreateSession(u, 24*time.Hour)
+			if err == nil {
+				http.SetCookie(w, &http.Cookie{
+					Name:     sessionCookieName,
+					Value:    newSess.Token,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   86400,
+				})
+			}
+		}
+
+		log.Info("admin: password changed", "username", sess.Username)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "password_changed"})
+	}))
+
+	// ----------------------------------------------------
+	// Protected Admin Management Endpoints
+	// ----------------------------------------------------
+
+	mux.HandleFunc("GET /admin/overview", protect(func(w http.ResponseWriter, _ *http.Request) {
 		ops := srv.Operators()
 		snapshots := make([]smsc.Snapshot, 0, len(ops))
 		var totalBinds int
@@ -115,12 +395,12 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 			Operators:           snapshots,
 		}
 		writeJSON(w, http.StatusOK, overview)
-	})
+	}))
 
-	mux.HandleFunc("GET /admin/operators", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /admin/operators", protect(func(w http.ResponseWriter, _ *http.Request) {
 		if st != nil {
 			stored, err := st.ListOperators()
-			if err == nil && len(stored) > 0 {
+			if err == nil {
 				out := make([]smsc.Snapshot, 0, len(stored))
 				for _, sop := range stored {
 					accts := make([]string, len(sop.Accounts))
@@ -165,9 +445,9 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 			out = append(out, op.Describe())
 		}
 		writeJSON(w, http.StatusOK, out)
-	})
+	}))
 
-	mux.HandleFunc("POST /admin/operators", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /admin/operators", protect(func(w http.ResponseWriter, r *http.Request) {
 		var op config.Operator
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&op); err != nil {
 			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON body: " + err.Error()})
@@ -202,9 +482,9 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 
 		log.Info("admin: created operator", "name", op.Name, "listen", op.Listen)
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "name": op.Name})
-	})
+	}))
 
-	mux.HandleFunc("GET /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /admin/operators/{name}", protect(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if st != nil {
 			op, err := st.GetOperator(name)
@@ -222,9 +502,9 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, op.Config())
-	})
+	}))
 
-	mux.HandleFunc("PUT /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /admin/operators/{name}", protect(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		var op config.Operator
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&op); err != nil {
@@ -253,9 +533,9 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 
 		log.Info("admin: updated operator", "name", name, "newName", op.Name, "listen", op.Listen)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "name": op.Name})
-	})
+	}))
 
-	mux.HandleFunc("DELETE /admin/operators/{name}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /admin/operators/{name}", protect(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if st != nil {
 			if err := st.DeleteOperator(name); err != nil {
@@ -271,14 +551,14 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 
 		log.Info("admin: deleted operator", "name", name)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
-	})
+	}))
 
-	mux.HandleFunc("GET /admin/sessions", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /admin/sessions", protect(func(w http.ResponseWriter, _ *http.Request) {
 		sessions := srv.Sessions()
 		writeJSON(w, http.StatusOK, sessions)
-	})
+	}))
 
-	mux.HandleFunc("POST /admin/sessions/{id}/disconnect", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /admin/sessions/{id}/disconnect", protect(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
 			writeJSON(w, http.StatusBadRequest, errBody{"session id required"})
@@ -290,9 +570,9 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		}
 		log.Info("admin: disconnected session", "id", id)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "disconnected", "id": id})
-	})
+	}))
 
-	mux.HandleFunc("GET /admin/events", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /admin/events", protect(func(w http.ResponseWriter, r *http.Request) {
 		limit := 100
 		if q := r.URL.Query().Get("limit"); q != "" {
 			if n, err := strconv.Atoi(q); err == nil && n > 0 {
@@ -301,17 +581,17 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		}
 		events := srv.Events(limit)
 		writeJSON(w, http.StatusOK, events)
-	})
+	}))
 
-	mux.HandleFunc("GET /admin/config", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /admin/config", protect(func(w http.ResponseWriter, _ *http.Request) {
 		cfg := srv.Config()
 		if cfg == nil {
 			cfg = &config.Config{}
 		}
 		writeJSON(w, http.StatusOK, cfg)
-	})
+	}))
 
-	mux.HandleFunc("POST /admin/operators/{name}/mo", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /admin/operators/{name}/mo", protect(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Source     string `json:"source"`
 			Dest       string `json:"dest"`
@@ -332,7 +612,7 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		}
 		log.Info("admin: injected MO", "operator", r.PathValue("name"), "dest", req.Dest)
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent", "operator": r.PathValue("name"), "dest": req.Dest})
-	})
+	}))
 
 	return mux
 }

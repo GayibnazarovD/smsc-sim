@@ -110,6 +110,13 @@
           Active Sessions
           <span class="tab-badge" id="badge-sessions-count">0</span>
         </button>
+        <button class="nav-tab" id="tab-btn-mt" data-view="mt">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+          Test SMS (MT)
+        </button>
         <button class="nav-tab" id="tab-btn-mo" data-view="mo">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
@@ -270,6 +277,176 @@
         </div>
       </section>
 
+      <!-- VIEW: MT STUDIO (OUTBOUND SMS TEST CLIENT) -->
+      <section class="view-panel" id="view-mt">
+        <div class="mo-studio-grid">
+          <!-- Left: MT Test Form -->
+          <div class="card form-card">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <h2 class="card-title">Outbound SMS Test Client (MT)</h2>
+                <p class="card-subtitle">Directly submit messages (submit_sm / data_sm) to test operator connectivity, latency, TLVs, and SMPP error simulation.</p>
+              </div>
+            </div>
+
+            <form id="mt-form" class="mo-form">
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label for="mt-operator-select" class="form-label">Target Operator</label>
+                  <select id="mt-operator-select" class="form-select" required>
+                    <option value="" disabled selected>Select an operator...</option>
+                  </select>
+                </div>
+                <div class="form-group col-6">
+                  <label for="mt-command-select" class="form-label">SMPP Command</label>
+                  <select id="mt-command-select" class="form-select">
+                    <option value="submit_sm" selected>submit_sm (Standard MT)</option>
+                    <option value="data_sm">data_sm (SMPP v3.4 / v5.0 Data)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label for="mt-source-input" class="form-label">Sender ID (Source)</label>
+                  <input type="text" id="mt-source-input" class="form-input" value="TEXTUP" placeholder="e.g. TEXTUP, +99890..., 3700" required>
+                  <div class="chip-container mt-1">
+                    <span class="chip-btn" data-target="mt-source-input" data-val="TEXTUP">Alphanumeric</span>
+                    <span class="chip-btn" data-target="mt-source-input" data-val="+998901234567">International</span>
+                    <span class="chip-btn" data-target="mt-source-input" data-val="3700">Short Code</span>
+                  </div>
+                </div>
+                <div class="form-group col-6">
+                  <label for="mt-dest-input" class="form-label">Recipient MSISDN (Dest)</label>
+                  <input type="text" id="mt-dest-input" class="form-input" value="+998909876543" placeholder="+99890..." required>
+                  <div class="chip-container mt-1">
+                    <span class="chip-btn" data-target="mt-dest-input" data-val="+998909876543">Uzbekistan</span>
+                    <span class="chip-btn" data-target="mt-dest-input" data-val="+14155552671">USA / Intl</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group col-6">
+                  <label for="mt-reg-del-select" class="form-label">Registered Delivery (DLR)</label>
+                  <select id="mt-reg-del-select" class="form-select">
+                    <option value="1" selected>1: SMSC DLR Requested (Success & Failure)</option>
+                    <option value="0">0: No Delivery Receipt</option>
+                    <option value="2">2: Failure Only (SMPP v5.0)</option>
+                    <option value="3">3: Success Only (SMPP v5.0)</option>
+                  </select>
+                </div>
+                <div class="form-group col-6">
+                  <label for="mt-encoding-select" class="form-label">Data Coding</label>
+                  <select id="mt-encoding-select" class="form-select">
+                    <option value="0" selected>0: GSM 7-bit Default</option>
+                    <option value="8">8: UCS-2 (Unicode / Cyrillic / Emoji)</option>
+                    <option value="4">4: 8-bit Binary Data</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="label-with-counter">
+                  <label for="mt-text-input" class="form-label">Message Content</label>
+                  <span class="char-counter" id="mt-char-counter">0 / 160 chars</span>
+                </div>
+                <textarea id="mt-text-input" class="form-textarea" rows="3" placeholder="Enter message text..." required>Hello from smsc-sim!</textarea>
+                
+                <div class="sim-chip-bar">
+                  <span class="sim-chip-label">Quick Error & Capability Simulation:</span>
+                  <div class="chip-container">
+                    <span class="chip-badge red" data-insert="[ERR_THROTTLED]">⚡ Throttled (0x58)</span>
+                    <span class="chip-badge orange" data-insert="[ERR_CONGESTION]">⚠️ SMPP v5 Congestion TLV</span>
+                    <span class="chip-badge red" data-insert="[STATUS:0x45]">🛑 Submit Fail (0x45)</span>
+                    <span class="chip-badge amber" data-insert="[STATUS:0x0B]">🚫 Invalid Dest (0x0B)</span>
+                    <span class="chip-badge purple" data-insert="[DLR:UNDELIV:1282]">❌ Undelivered DLR</span>
+                    <span class="chip-badge blue" data-insert="[DLR:EXPIRED]">⏳ Expired DLR</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" id="mt-submit-btn" class="btn btn-primary">
+                  <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                  Send MT Test SMS
+                </button>
+                <button type="button" id="mt-reset-btn" class="btn btn-secondary">Reset</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Right: MT Inspection Result Card -->
+          <div class="card info-card">
+            <div class="card-header">
+              <h2 class="card-title">Protocol Wire Inspection</h2>
+              <span id="mt-result-status-badge" class="badge-status-pill hidden"></span>
+            </div>
+
+            <div id="mt-empty-result" class="empty-state small">
+              <div class="empty-icon">🔬</div>
+              <p>Submit a test SMS on the left to inspect command status, round-trip latency, message IDs, SMPP v5 TLVs, and live DLRs.</p>
+            </div>
+
+            <div id="mt-inspection-result" class="hidden">
+              <div class="result-metric-grid">
+                <div class="result-metric-card">
+                  <span class="res-label">STATUS</span>
+                  <span class="res-value" id="res-status">-</span>
+                </div>
+                <div class="result-metric-card">
+                  <span class="res-label">LATENCY</span>
+                  <span class="res-value" id="res-latency">-</span>
+                </div>
+                <div class="result-metric-card">
+                  <span class="res-label">MESSAGE ID</span>
+                  <span class="res-value code-font" id="res-msgid">-</span>
+                </div>
+                <div class="result-metric-card">
+                  <span class="res-label">COMMAND</span>
+                  <span class="res-value" id="res-cmd">-</span>
+                </div>
+              </div>
+
+              <div class="inspection-section">
+                <h3 class="inspection-title">Address Resolution</h3>
+                <div class="addr-tag-grid">
+                  <div class="addr-box">
+                    <span class="addr-type">SOURCE (Sender ID)</span>
+                    <span class="addr-val" id="res-src-addr">-</span>
+                    <span class="addr-meta" id="res-src-meta">TON: - | NPI: -</span>
+                  </div>
+                  <div class="addr-box">
+                    <span class="addr-type">DESTINATION (Recipient)</span>
+                    <span class="addr-val" id="res-dest-addr">-</span>
+                    <span class="addr-meta" id="res-dest-meta">TON: - | NPI: -</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="inspection-section" id="res-tlv-section">
+                <h3 class="inspection-title">SMPP Optional TLVs</h3>
+                <div id="res-tlv-content" class="tlv-list"></div>
+              </div>
+
+              <div class="inspection-section" id="res-dlr-section">
+                <h3 class="inspection-title">Delivery Receipt (DLR)</h3>
+                <div class="dlr-box" id="res-dlr-box">
+                  <div class="dlr-status-row">
+                    <span id="res-dlr-badge" class="badge-status-pill"></span>
+                    <span id="res-dlr-latency" class="res-meta"></span>
+                  </div>
+                  <pre class="dlr-text" id="res-dlr-text"></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- VIEW 3: MO STUDIO -->
       <section class="view-panel" id="view-mo">
         <div class="mo-studio-grid">
@@ -278,7 +455,18 @@
             <div class="card-header">
               <div class="card-title-wrap">
                 <h2 class="card-title">Send Mobile-Originated (MO) SMS</h2>
-                <p class="card-subtitle">Push deliver_sm PDUs to bound ESME clients through the selected operator.</p>
+                <p class="card-subtitle">Push deliver_sm PDUs to bound ESME clients or the built-in Virtual Test Receiver.</p>
+              </div>
+            </div>
+
+            <!-- Virtual Receiver Control Bar -->
+            <div class="vr-control-bar">
+              <div class="vr-status-info">
+                <span class="vr-dot" id="vr-status-dot"></span>
+                <span class="vr-status-text" id="vr-status-text">Virtual Receiver: Inactive</span>
+              </div>
+              <div class="vr-actions">
+                <button type="button" id="btn-toggle-vr" class="btn btn-sm btn-outline">Start Virtual Receiver</button>
               </div>
             </div>
 
@@ -370,10 +558,35 @@
             </div>
 
             <div class="doc-callout">
-              <h3 class="callout-title">💡 How MO Testing Works</h3>
+              <h3 class="callout-title">💡 MO (Inbound) vs MT (Outbound)</h3>
               <p class="callout-text">
-                This triggers a real <code>deliver_sm</code> PDU sent over the socket to connected SMPP transceivers or receivers. Your backend application (e.g. router-service / sms-service) will receive it as an inbound user SMS.
+                <strong>MO (Mobile Originated)</strong> simulates messages sent by phone subscribers into your backend via <code>deliver_sm</code>. If your backend service is not running yet, start the <strong>Virtual Receiver</strong> above to test MO deliver_sm messages immediately in this dashboard! For outbound SMS testing, use the <strong>Test SMS (MT)</strong> tab.
               </p>
+            </div>
+
+            <div class="table-card mt-3">
+              <div class="card-header">
+                <h3 class="card-title">Live Inbound MO Inbox</h3>
+                <button id="vr-clear-inbox-btn" class="btn btn-ghost btn-xs">Clear Inbox</button>
+              </div>
+              <div class="table-responsive">
+                <table class="data-table small-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Sender</th>
+                      <th>Recipient</th>
+                      <th>Message Text</th>
+                    </tr>
+                  </thead>
+                  <tbody id="vr-inbox-tbody">
+                    <!-- Populated by Virtual Receiver -->
+                  </tbody>
+                </table>
+                <div class="empty-state small" id="vr-empty-inbox">
+                  <p>No messages received yet. Start the virtual receiver and inject an MO message above.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -47,3 +47,18 @@
   - `receipted_message_id` (`0x001E`)
   - `message_payload` (`0x0424`)
 - **Status Codes**: Full 51-code catalogue including `ESME_RSERTYPUNAUTH`, `ESME_RPROHIBITED`, `ESME_RSERTYPUNAVAIL`, `ESME_RSERTYPDENIED`.
+
+## Interactive Testing Studios (Web Dashboard)
+
+The simulator includes two built-in browser-based studios to test connections and protocol capabilities without writing any client code:
+
+1. **MT Studio (Outbound SMS Test Client)**:
+   - Connects an internal transceiver test client to any configured operator listener.
+   - Submits `submit_sm` or `data_sm` with customizable Sender IDs (alphanumeric, shortcode, international E.164).
+   - Tests registered delivery modes (none, both, failure-only, success-only).
+   - Features one-click chips for universal error & capability simulation (`[ERR_THROTTLED]`, `[ERR_CONGESTION]`, `[STATUS:0x45]`, `[STATUS:0x0B]`, `[DLR:UNDELIV:1282]`, `[DLR:EXPIRED]`).
+   - Displays real-time wire protocol inspection: status name & hex, round-trip latency, assigned message ID, decoded address TON/NPI, optional TLVs (e.g. `congestion_state`), and delivery receipts (DLR).
+
+2. **MO Studio (Inbound deliver_sm & Virtual Test Receiver)**:
+   - Pushes `deliver_sm` PDUs to connected external ESME transceivers/receivers.
+   - Built-in **Virtual Test Receiver**: allows users to start an on-demand mock receiver directly inside the dashboard, enabling instant testing and inspection of incoming mobile-originated messages even if an external application is not running.

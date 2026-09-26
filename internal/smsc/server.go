@@ -38,6 +38,10 @@ type Server struct {
 	events    []Event
 	maxEvents int
 
+	vrMu             sync.RWMutex
+	virtualReceivers map[string]*virtualReceiverSession
+	virtualMessages  []ReceivedMOMessage
+
 	wg sync.WaitGroup
 }
 
@@ -55,6 +59,7 @@ func New(cfg *config.Config, log *slog.Logger, m *metrics.Metrics) *Server {
 		listeners: map[string]net.Listener{},
 		sessions:  map[*session]struct{}{},
 		maxEvents: 250,
+		virtualReceivers: make(map[string]*virtualReceiverSession),
 	}
 	// Give each operator a disjoint seed region so their RNG streams don't alias.
 	base := rand.New(rand.NewSource(seed))
@@ -446,9 +451,19 @@ func detectAddress(addr string) (ton, npi uint8, clean string) {
 // Shutdown stops accepting, closes every session and waits for goroutines to
 // drain or ctx to expire.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.mu.Lock()
 	s.accepting = false
 	s.mu.Unlock()
+
+	s.vrMu.Lock()
+	for _, vrs := range s.virtualReceivers {
+		vrs.close()
+	}
+	s.virtualReceivers = make(map[string]*virtualReceiverSession)
+	s.vrMu.Unlock()
 
 	_ = s.stopListeners()
 

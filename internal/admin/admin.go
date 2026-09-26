@@ -646,6 +646,61 @@ func Handler(srv *smsc.Server, st *store.Store, log *slog.Logger) http.Handler {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "sent", "operator": r.PathValue("name"), "dest": req.Dest})
 	}))
 
+	mux.HandleFunc("POST /admin/operators/{name}/test-submit", protect(func(w http.ResponseWriter, r *http.Request) {
+		var req smsc.SubmitTestRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid JSON body: " + err.Error()})
+			return
+		}
+		req.Operator = r.PathValue("name")
+		if req.Dest == "" {
+			writeJSON(w, http.StatusBadRequest, errBody{"dest phone number is required"})
+			return
+		}
+		if req.Source == "" {
+			req.Source = "TEST_SMS"
+		}
+		res, err := srv.SubmitTest(req)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errBody{err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+	}))
+
+	mux.HandleFunc("POST /admin/operators/{name}/virtual-rx/start", protect(func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if err := srv.StartVirtualReceiver(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "active", "operator": name})
+	}))
+
+	mux.HandleFunc("POST /admin/operators/{name}/virtual-rx/stop", protect(func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if err := srv.StopVirtualReceiver(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "stopped", "operator": name})
+	}))
+
+	mux.HandleFunc("GET /admin/operators/{name}/virtual-rx/status", protect(func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"operator": name,
+			"active":   srv.IsVirtualReceiverActive(name),
+			"messages": srv.VirtualReceiverMessages(name),
+		})
+	}))
+
+	mux.HandleFunc("DELETE /admin/operators/{name}/virtual-rx/messages", protect(func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		srv.ClearVirtualReceiverMessages(name)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+	}))
+
 	return mux
 }
 

@@ -60,6 +60,45 @@
     sessionsEmpty: document.getElementById('sessions-empty-state'),
     btnRefreshSessions: document.getElementById('btn-refresh-sessions'),
     
+    // MT Studio
+    mtForm: document.getElementById('mt-form'),
+    mtOpSelect: document.getElementById('mt-operator-select'),
+    mtCommandSelect: document.getElementById('mt-command-select'),
+    mtSourceInput: document.getElementById('mt-source-input'),
+    mtDestInput: document.getElementById('mt-dest-input'),
+    mtRegDelSelect: document.getElementById('mt-reg-del-select'),
+    mtEncodingSelect: document.getElementById('mt-encoding-select'),
+    mtTextInput: document.getElementById('mt-text-input'),
+    mtCharCounter: document.getElementById('mt-char-counter'),
+    mtSubmitBtn: document.getElementById('mt-submit-btn'),
+    mtResetBtn: document.getElementById('mt-reset-btn'),
+    mtResultStatusBadge: document.getElementById('mt-result-status-badge'),
+    mtEmptyResult: document.getElementById('mt-empty-result'),
+    mtInspectionResult: document.getElementById('mt-inspection-result'),
+    resStatus: document.getElementById('res-status'),
+    resLatency: document.getElementById('res-latency'),
+    resMsgId: document.getElementById('res-msgid'),
+    resCmd: document.getElementById('res-cmd'),
+    resSrcAddr: document.getElementById('res-src-addr'),
+    resSrcMeta: document.getElementById('res-src-meta'),
+    resDestAddr: document.getElementById('res-dest-addr'),
+    resDestMeta: document.getElementById('res-dest-meta'),
+    resTlvSection: document.getElementById('res-tlv-section'),
+    resTlvContent: document.getElementById('res-tlv-content'),
+    resDlrSection: document.getElementById('res-dlr-section'),
+    resDlrBox: document.getElementById('res-dlr-box'),
+    resDlrBadge: document.getElementById('res-dlr-badge'),
+    resDlrLatency: document.getElementById('res-dlr-latency'),
+    resDlrText: document.getElementById('res-dlr-text'),
+
+    // Virtual Receiver in MO
+    btnToggleVR: document.getElementById('btn-toggle-vr'),
+    vrStatusDot: document.getElementById('vr-status-dot'),
+    vrStatusText: document.getElementById('vr-status-text'),
+    vrInboxTbody: document.getElementById('vr-inbox-tbody'),
+    vrEmptyInbox: document.getElementById('vr-empty-inbox'),
+    vrClearInboxBtn: document.getElementById('vr-clear-inbox-btn'),
+
     // MO Studio
     moForm: document.getElementById('mo-form'),
     moOpSelect: document.getElementById('mo-operator-select'),
@@ -236,6 +275,9 @@
 
     if (viewName === 'config' && !state.config) {
       fetchConfig();
+    }
+    if (viewName === 'mo' && el.moOpSelect && el.moOpSelect.value) {
+      checkVRStatus(el.moOpSelect.value);
     }
   }
 
@@ -565,6 +607,56 @@
       localStorage.removeItem('smsc_sim_mo_history');
       renderMOHistory();
     });
+
+    // MT Studio Listeners
+    if (el.mtTextInput) {
+      el.mtTextInput.addEventListener('input', updateMTCharCounter);
+    }
+    if (el.mtResetBtn) {
+      el.mtResetBtn.addEventListener('click', () => {
+        el.mtForm.reset();
+        updateMTCharCounter();
+      });
+    }
+    if (el.mtForm) {
+      el.mtForm.addEventListener('submit', handleMTSubmit);
+    }
+
+    // Quick presets for chips
+    document.querySelectorAll('.chip-btn').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const targetId = chip.getAttribute('data-target');
+        const targetVal = chip.getAttribute('data-val');
+        const targetEl = document.getElementById(targetId);
+        if (targetEl) targetEl.value = targetVal;
+      });
+    });
+
+    // Simulation tag chips
+    document.querySelectorAll('.chip-badge[data-insert]').forEach((badge) => {
+      badge.addEventListener('click', () => {
+        const token = badge.getAttribute('data-insert');
+        if (el.mtTextInput) {
+          const current = el.mtTextInput.value;
+          if (current.includes(token)) return;
+          el.mtTextInput.value = token + ' ' + current;
+          updateMTCharCounter();
+        }
+      });
+    });
+
+    // Virtual Receiver Listeners
+    if (el.btnToggleVR) {
+      el.btnToggleVR.addEventListener('click', handleToggleVR);
+    }
+    if (el.vrClearInboxBtn) {
+      el.vrClearInboxBtn.addEventListener('click', handleClearVRInbox);
+    }
+    if (el.moOpSelect) {
+      el.moOpSelect.addEventListener('change', () => {
+        checkVRStatus(el.moOpSelect.value);
+      });
+    }
 
     // Copy Config
     el.btnCopyConfig.addEventListener('click', () => {
@@ -1222,6 +1314,22 @@
     if (!state.overview || !state.overview.operators) return;
     const currentVal = el.moOpSelect.value;
     el.moOpSelect.innerHTML = '<option value="" disabled>Select an operator...</option>';
+
+    if (el.mtOpSelect) {
+      const currentMTVal = el.mtOpSelect.value;
+      el.mtOpSelect.innerHTML = '<option value="" disabled>Select an operator...</option>';
+      state.overview.operators.forEach((op) => {
+        const opt = document.createElement('option');
+        opt.value = op.name;
+        opt.textContent = `${op.name} (${op.listen})`;
+        el.mtOpSelect.appendChild(opt);
+      });
+      if (currentMTVal && state.overview.operators.some((o) => o.name === currentMTVal)) {
+        el.mtOpSelect.value = currentMTVal;
+      } else if (state.overview.operators.length > 0) {
+        el.mtOpSelect.value = state.overview.operators[0].name;
+      }
+    }
 
     // Count bound receivers per operator
     const receiverCounts = {};

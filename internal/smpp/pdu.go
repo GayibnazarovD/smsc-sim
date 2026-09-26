@@ -154,6 +154,11 @@ func (w *writer) bytesVal() []byte { return w.buf.Bytes() }
 
 // --- TLV -------------------------------------------------------------------
 
+// DecodeTLVs parses optional parameters (tag/length/value) from byte slice.
+func DecodeTLVs(b []byte) ([]TLV, error) {
+	return decodeTLVs(b)
+}
+
 func decodeTLVs(b []byte) ([]TLV, error) {
 	var out []TLV
 	for len(b) > 0 {

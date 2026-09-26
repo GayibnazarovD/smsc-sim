@@ -11,8 +11,10 @@ import (
 	"log/slog"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/config"
 	"github.com/dilshodgayibnazarov/smsc-sim/internal/metrics"
@@ -389,18 +391,56 @@ func (s *Server) InjectMO(operator, source, dest, text string, dataCoding uint8)
 	if len(sessions) == 0 {
 		return fmt.Errorf("operator %q has no bound receiver session", operator)
 	}
+	srcTON, srcNPI, cleanSrc := detectAddress(source)
+	dstTON, dstNPI, cleanDst := detectAddress(dest)
+
 	sm := &smpp.SM{
-		SourceAddr:   source,
-		DestAddr:     dest,
-		DataCoding:   dataCoding,
-		ShortMessage: []byte(text),
+		SourceAddrTON: srcTON,
+		SourceAddrNPI: srcNPI,
+		SourceAddr:    cleanSrc,
+		DestAddrTON:   dstTON,
+		DestAddrNPI:   dstNPI,
+		DestAddr:      cleanDst,
+		DataCoding:    dataCoding,
+		ShortMessage:  []byte(text),
 	}
 	target := sessions[op.newRNG().Intn(len(sessions))]
 	err := target.sendMO(sm)
 	if err == nil {
-		s.RecordEvent(operator, "mo", "success", fmt.Sprintf("MO message injected to %s", dest), fmt.Sprintf("Source: %s | Text: %s", source, text))
+		s.RecordEvent(operator, "mo", "success", fmt.Sprintf("MO message injected to %s (TON=%d)", cleanDst, dstTON), fmt.Sprintf("Source: %s (TON=%d) | Text: %s", cleanSrc, srcTON, text))
 	}
 	return err
+}
+
+// detectAddress returns the SMPP Type-of-Number (TON) and Numbering-Plan-Identification (NPI)
+// based on whether the address is an alphanumeric sender, short code, or international E.164 number.
+func detectAddress(addr string) (ton, npi uint8, clean string) {
+	addr = strings.TrimSpace(addr)
+	hasLetter := false
+	allDigits := true
+	for _, ch := range addr {
+		if unicode.IsLetter(ch) {
+			hasLetter = true
+			allDigits = false
+		} else if !unicode.IsDigit(ch) && ch != '+' {
+			allDigits = false
+		}
+	}
+	clean = strings.TrimPrefix(addr, "+")
+
+	switch {
+	case hasLetter:
+		// Alphanumeric Sender ID (e.g. TEXTUP, Google, Uber, BankAlert) -> TON 5, NPI 0
+		return 5, 0, addr
+	case len(clean) >= 3 && len(clean) <= 6 && allDigits:
+		// Short Code (e.g. 3700, 1122, 999) -> TON 3, NPI 0
+		return 3, 0, clean
+	case len(clean) > 6 && allDigits:
+		// International phone number E.164 (e.g. 998901234567, 14155552671) -> TON 1, NPI 1
+		return 1, 1, clean
+	default:
+		return 0, 0, addr
+	}
 }
 
 // Shutdown stops accepting, closes every session and waits for goroutines to
